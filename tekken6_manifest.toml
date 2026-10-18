@@ -1,0 +1,14 @@
+# Isolated Tekken 6 RexGlue experiment. Keep this separate from the proven
+# XenonRecomp host until codegen and the first raw-runtime boot are measured.
+
+[project]
+name = "tekken6"
+sdk_version = "0.10.0"
+game_root = "game"
+
+[entrypoint]
+file_path = "game/Default.xex"
+out_directory_path = "generated/default"
+includes = [
+  "tekken6_config.toml",
+]

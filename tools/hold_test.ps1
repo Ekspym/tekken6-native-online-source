@@ -1,0 +1,71 @@
+# Hold-point test: both instances boot WITHOUT match settings, park before the fight loading (T6_NET_HOLD, status
+# 'state ready'), wait there -Idle1 / -Idle2 seconds, then both get a 'start' line (T6_NET_CMD) like the launcher sends
+# it. Prints the time from 'start' to the session and compares the fight state of both instances.
+param([string]$Name = 'h1', [int]$Seconds = 90, [int]$Idle = 10, [int]$Char1 = 3, [int]$Char2 = 33, [int]$Stage = 5,
+      [int]$Seed = 424242, [int]$LagMs = 0, [string]$InputMode = 'random', [int]$Rounds = 3, [int]$Time = 0, [int]$Rematch = 0, [string]$MenuCmd = 'rematch')
+. "$PSScriptRoot\t6_env.ps1"
+if (-not (Test-Path "$root\user2")) { Copy-Item -Recurse "$root\user" "$root\user2" }
+$procs = @()
+foreach ($p in 1, 2) {
+    $run = "$root\runs\${Name}_p$p"
+    Remove-Item -Recurse -Force $run -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $run | Out-Null
+    foreach ($v in 'T6_NET_PLAYER', 'T6_NET_REMOTE', 'T6_NET_LOCAL_PORT', 'T6_NET_SEED', 'T6_CHAR_P1', 'T6_CHAR_P2', 'T6_STAGE', 'T6_ROUNDS',
+                   'T6_SNAPTEST', 'T6_REC', 'T6_HASH', 'T6_NET_PAGEHASH') { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
+    $env:T6_NET = '1'; $env:T6_NET_HOLD = '1'; $env:T6_FIX_SEED = '1'; $env:T6_PLAY = "$root\tools\menu_vs.bin"
+    $env:T6_VIRTUAL_TB = '1'; $env:T6_SOUND_SEPARATE = '1'; $env:T6_SNAP_EXCLUDE_FILE = "$root\tools\netplay_exclude.txt"
+    $env:T6_NET_STATUS = "$run\status.txt"; $env:T6_NET_CMD = "$run\cmd.txt"
+    $env:T6_NET_DUMP = '1'; $env:T6_RAND_LOG = '1'; $env:T6_NET_DUMP_DIR = $run
+    [Environment]::SetEnvironmentVariable('ggpo.network.delay', "$LagMs", 'Process')
+    $env:REX_LOG_LEVEL = 'info'
+    if ($env:T6_STALL_P2) { if ($p -eq 2) { $env:T6_NET_TEST_STALL = $env:T6_STALL_P2 } else { Remove-Item Env:T6_NET_TEST_STALL -ErrorAction SilentlyContinue } }  # a hitch of player 2 only
+    if ($env:T6_BLUR_OFF_P1) { if ($p -eq 1) { $env:T6_NO_BLUR = '1' } else { Remove-Item Env:T6_NO_BLUR -ErrorAction SilentlyContinue } }  # mixed test: only player 1 without motion blur
+    $user = if ($p -eq 1) { "$root\user" } else { "$root\user2" }
+    $a = @("--game_data_root=$root\game", "--user_data_root=$user", "--cache_root=$run\cache", "--log_file=$run\tekken6.log",
+           '--fullscreen=false', '--async_shader_compilation=true', '--render_target_path_d3d12=rov', '--input_backend=mmjoystick')
+    $proc = Start-Process -FilePath "$root\build\tekken6.exe" -ArgumentList $a -WorkingDirectory "$root\build" -PassThru
+    Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+        "$root\tools\window_guard.ps1", '-ProcessId', $proc.Id, '-X', (($p - 1) * 660), '-Y', 0, '-Title', 'tekken' | Out-Null
+    $procs += $proc
+    # staggered boot: the next instance starts when this one stands at the hold point
+    $t0 = Get-Date
+    while (((Get-Date) - $t0).TotalSeconds -lt 240 -and -not $proc.HasExited) {
+        if ((Test-Path "$run\status.txt") -and ((Get-Content "$run\status.txt" -ErrorAction SilentlyContinue) -match 'state ready')) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    "p$p ready after $([int]((Get-Date) - $t0).TotalSeconds) s"
+}
+Start-Sleep -Seconds $Idle
+$tStart = Get-Date
+foreach ($p in 1, 2) {
+    $line = "start player=$p port=$(7199 + $p) remote=127.0.0.1:$(7202 - $p) delay=1 seed=$Seed char1=$Char1 char2=$Char2 stage=$Stage rounds=$Rounds input=$InputMode$(if ($Time) { " time=$Time" })"
+    Set-Content -Path "$root\runs\${Name}_p$p\cmd.txt" -Value $line -Encoding ascii
+}
+$last = @{ 1 = ''; 2 = '' }
+$rematches = 0
+$deadline = (Get-Date).AddSeconds($Seconds)
+while ((Get-Date) -lt $deadline) {
+    foreach ($p in 1, 2) {
+        $st = (Get-Content "$root/runs/${Name}_p$p/status.txt" -ErrorAction SilentlyContinue) -join ' | '
+        if ($st -and $st -ne $last[$p]) { $last[$p] = $st; "p$p +$([Math]::Round(((Get-Date) - $tStart).TotalSeconds, 1)) s: $st" }
+    }
+    # -Rematch N: when both stand in the menu after the match, both get 'rematch' (like two launchers that agreed)
+    if ($rematches -lt $Rematch -and $last[1] -match '^state menu' -and $last[2] -match '^state menu') {
+        Start-Sleep -Seconds 2
+        foreach ($p in 1, 2) { Set-Content -Path "$root/runs/${Name}_p$p/cmd.txt" -Value $MenuCmd -Encoding ascii }
+        $rematches++
+        "rematch $rematches sent at +$([Math]::Round(((Get-Date) - $tStart).TotalSeconds, 1)) s"
+        $last[1] = ''; $last[2] = ''
+        Start-Sleep -Seconds 4
+    }
+    if (($procs | Where-Object { -not $_.HasExited }).Count -eq 0) { break }
+    Start-Sleep -Milliseconds 200
+}
+foreach ($proc in $procs) { if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force } }
+foreach ($p in 1, 2) {
+    $l = "$root\runs\${Name}_p$p\tekken6.log"
+    Select-String -Path $l -Pattern 'T6 net: start after|T6 net: session at|session running|player setup .* side|T6 crash: host|rematch' |
+        Select-Object -First 14 | ForEach-Object { "p${p}: " + $_.Line.Substring(13, 12) + ' ' + $_.Line.Substring(58, [Math]::Min(120, $_.Line.Length - 58)) }
+}
+& $py "$root\tools\state_diff.py" "$root\runs\${Name}_p1\fight_state.csv" "$root\runs\${Name}_p2\fight_state.csv" |
+    Select-String -Pattern 'common|players|rng3'

@@ -1,0 +1,25 @@
+<RCC>
+  <qresource prefix="/">
+    <file>app.ico</file>
+    <file>sounds/match_found.wav</file>
+    <file>fonts/BaiJamjuree-Regular.ttf</file>
+    <file>fonts/BaiJamjuree-Medium.ttf</file>
+    <file>fonts/BaiJamjuree-SemiBold.ttf</file>
+    <file>fonts/BaiJamjuree-Bold.ttf</file>
+    <file>icons/accessibility_new.svg</file>
+    <file>icons/refresh.svg</file>
+    <file>icons/download.svg</file>
+    <file>icons/trophy.svg</file>
+    <file>icons/account_circle.svg</file>
+    <file>icons/group.svg</file>
+    <file>icons/lists.svg</file>
+    <file>icons/settings.svg</file>
+    <file>icons/swords.svg</file>
+    <file>icons/person.svg</file>
+    <file>icons/person_outline.svg</file>
+    <file>icons/arrow_forward.svg</file>
+    <file>icons/chevron.svg</file>
+    <file>icons/toggle_on.svg</file>
+    <file>icons/toggle_off.svg</file>
+  </qresource>
+</RCC>

@@ -1,0 +1,33 @@
+# Static analysis of the project's C++ (src/, launcher/): bug-prone patterns, the CERT C++ rules, the clang static
+# analyzer and performance checks. Left out, on purpose:
+#   easily-swappable-parameters, narrowing-conversions, implicit-widening-of-multiplication-result, signed-bitwise -
+#       guest memory is addressed with explicit 32-bit integer arithmetic and bit masks all over (big endian words)
+#   reserved-identifier, cert-dcl37-c, cert-dcl51-cpp - the recompiler's ABI names (__imp__sub_XXXXXXXX)
+#   macro-parentheses - the hook macros paste function names
+#   cert-env33-c - the tools start processes on purpose (none of it takes outside input)
+#   cert-err33-c - printf / fwrite results of diagnostics files are not checked
+#   cert-err58-cpp, throwing-static-initialization - globals that allocate at start: a failed allocation there ends
+#       the program either way
+#   performance-enum-size, performance-no-int-to-ptr, switch-missing-default-case
+Checks: >
+  -*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  performance-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-signed-bitwise,
+  -bugprone-reserved-identifier,
+  -cert-dcl37-c,
+  -cert-dcl51-cpp,
+  -bugprone-macro-parentheses,
+  -cert-env33-c,
+  -cert-err33-c,
+  -cert-err58-cpp,
+  -bugprone-throwing-static-initialization,
+  -performance-enum-size,
+  -performance-no-int-to-ptr,
+  -bugprone-switch-missing-default-case
+HeaderFilterRegex: '(src|launcher)[/\\].*'

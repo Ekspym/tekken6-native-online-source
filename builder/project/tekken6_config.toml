@@ -1,0 +1,254 @@
+# First-pass RexGlue codegen configuration for the retail Tekken 6 XEX.
+# This intentionally carries only validated structural hints from the existing
+# XenonRecomp pass. Runtime approximations, decoded-bank remaps, forced GPU
+# readiness, and guessed callbacks are deliberately absent.
+
+skip_lr = false
+skip_msr = false
+ctr_as_local = false
+xer_as_local = false
+reserved_as_local = false
+cr_as_local = false
+non_argument_as_local = false
+non_volatile_as_local = false
+
+# RexGlue's validation reports these branch targets as tail/secondary
+# functions, while the existing independent XenonRecomp pass already proves
+# each is a real emitted function start in this exact XEX.
+[functions]
+"0x821927D0" = { name = "sub_821927D0" }
+"0x82192830" = { name = "sub_82192830" }
+"0x82192890" = { name = "sub_82192890" }
+"0x821928F0" = { name = "sub_821928F0" }
+"0x82218290" = { name = "sub_82218290" }
+"0x82221CD8" = { name = "sub_82221CD8" }
+"0x8231D350" = { name = "sub_8231D350" }
+"0x82404B58" = { name = "sub_82404B58" }
+"0x82404BE8" = { name = "sub_82404BE8" }
+# These two short helpers were missed by automatic discovery even though they
+# are valid entrypoints in the supported retail XEX. Keep them in the codegen
+# config so rebuilding from a user-supplied ISO regenerates the fixes.
+"0x82494440" = { name = "sub_82494440" }
+"0x82494448" = { name = "sub_82494448" }
+"0x82513E48" = { name = "sub_82513E48" }
+"0x82514E28" = { name = "sub_82514E28" }
+"0x825359E0" = { name = "sub_825359E0" }
+"0x8252B5C8" = { name = "sub_8252B5C8" }
+"0x825231D8" = { name = "sub_825231D8" }
+"0x8267D800" = { name = "sub_8267D800" }
+"0x8268F528" = { name = "sub_8268F528" }
+"0x824F1BC0" = { name = "sub_824F1BC0" }
+"0x824F55F0" = { name = "sub_824F55F0" }
+
+# The XEX contains a contiguous group of 16-byte virtual-call thunks here.
+# ReXGlue discovered the first thunk (0x825501A8) and the real function after
+# the group (0x825502A8), but missed these sibling entrypoints. The intro-to-
+# title callback at 0x825501D8 is one of them (loads vtable slot +0x6C).
+"0x825501B8" = { name = "sub_825501B8" }
+"0x825501C8" = { name = "sub_825501C8" }
+"0x825501D8" = { name = "sub_825501D8" }
+"0x825501E8" = { name = "sub_825501E8" }
+"0x825501F8" = { name = "sub_825501F8" }
+"0x82550208" = { name = "sub_82550208" }
+"0x82550218" = { name = "sub_82550218" }
+"0x82550228" = { name = "sub_82550228" }
+"0x82550238" = { name = "sub_82550238" }
+"0x82550248" = { name = "sub_82550248" }
+"0x82550258" = { name = "sub_82550258" }
+"0x82550268" = { name = "sub_82550268" }
+"0x82550278" = { name = "sub_82550278" }
+"0x82550288" = { name = "sub_82550288" }
+"0x82550298" = { name = "sub_82550298" }
+
+# PPC padding seen in the same retail image.
+[[invalid_instructions]]
+data = 0x00000000
+size = 4
+
+[[switch_tables]]
+address = 0x8225794C
+register = 11
+labels = [
+  0x822579B8, 0x82257980, 0x82257998, 0x82257988,
+  0x822579A0, 0x82257990, 0x822579B0, 0x822579B8,
+  0x822579B8, 0x822579B8, 0x822579B8, 0x822579A8,
+]
+
+[[switch_tables]]
+address = 0x824EBDF4
+register = 31
+labels = [
+  0x824EBE04, 0x824EBDF8, 0x824EBE04, 0x824EBFA8,
+  0x824EBEE8, 0x824EBEE8, 0x824EC0A4, 0x824EC0C8,
+  0x824EC128, 0x824EC128, 0x824EBE04, 0x824EC128,
+  0x824EBFA8, 0x824EC128, 0x824EC10C, 0x824EC118,
+]
+
+# Retail descriptor dispatcher. The index is the low nibble of r7; entries
+# 0 and 1 re-enter the descriptor resolver, 2-5 dispatch to helper functions,
+# 6-13 are null targets, and 14-15 read the adjacent table entries exactly as
+# the original indexed load does. Keeping this as an explicit table lets the
+# emitter preserve self-tail dispatch as a local loop.
+[[switch_tables]]
+address = 0x8256D5E0
+register = 7
+selector_mask = 0xF
+labels = [
+  0x8256D5B8, 0x8256D5B8, 0x8256D3D0, 0x8256D3E8,
+  0x8256D400, 0x8256D400, 0, 0, 0, 0, 0, 0, 0, 0,
+  0x8256CBC8, 0x8256D418,
+]
+
+# The resolver reached by the first table has the same indexed-dispatch
+# pattern, using the adjacent table at 0x82802EF8.
+[[switch_tables]]
+address = 0x8256CBF0
+register = 7
+selector_mask = 0xF
+labels = [
+  0x8256CBC8, 0x8256D418, 0x8256D608, 0x8256D418,
+  0x8256CBF8, 0x8256D430, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+]
+
+[[switch_tables]]
+address = 0x826AA52C
+register = 11
+labels = [
+  0x826AA70C, 0x826AA9FC, 0x826AA530, 0x826AA9FC,
+  0x826AA70C, 0x826AA9FC, 0x826AA70C, 0x826AA9FC,
+  0x826AA9FC, 0x826AA9FC, 0x826AA9FC, 0x826AA9FC,
+  0x826AA9FC, 0x826AA9FC, 0x826AA9FC, 0x826AA9FC,
+  0x826AA9FC, 0x826AA9FC, 0x826AA618, 0x826AA9FC,
+  0x826AA9FC, 0x826AA9FC, 0x826AA9FC, 0x826AA84C,
+  0x826AA9FC, 0x826AA59C, 0x826AA9FC, 0x826AA9FC,
+  0x826AA9FC, 0x826AA9FC, 0x826AA9FC, 0x826AA9FC,
+  0x826AA718, 0x826AA9FC, 0x826AA540, 0x826AA83C,
+  0x826AA718, 0x826AA718, 0x826AA718, 0x826AA9FC,
+  0x826AA83C, 0x826AA9FC, 0x826AA9FC, 0x826AA9FC,
+  0x826AA9FC, 0x826AA6D0, 0x826AA884, 0x826AA848,
+  0x826AA9FC, 0x826AA9FC, 0x826AA628, 0x826AA9FC,
+  0x826AA840, 0x826AA9FC, 0x826AA9FC, 0x826AA854,
+]
+
+# _output_s (secure printf core, used by _snprintf_s) is a byte-identical copy of _output (0x826AA0E8) at +0x6D88:
+# the same 56-entry conversion table (chars A..x), relocated. The earlier 51-entry list dropped 5 entries, shifting
+# every case from S on (%s printed the pointer in hex, %d printed nothing -> loader paths like "8200cec88200cf00").
+[[switch_tables]]
+address = 0x826B12B4
+register = 11
+labels = [
+  0x826B1494, 0x826B1784, 0x826B12B8, 0x826B1784, 0x826B1494, 0x826B1784, 0x826B1494, 0x826B1784,
+  0x826B1784, 0x826B1784, 0x826B1784, 0x826B1784, 0x826B1784, 0x826B1784, 0x826B1784, 0x826B1784,
+  0x826B1784, 0x826B1784, 0x826B13A0, 0x826B1784, 0x826B1784, 0x826B1784, 0x826B1784, 0x826B15D4,
+  0x826B1784, 0x826B1324, 0x826B1784, 0x826B1784, 0x826B1784, 0x826B1784, 0x826B1784, 0x826B1784,
+  0x826B14A0, 0x826B1784, 0x826B12C8, 0x826B15C4, 0x826B14A0, 0x826B14A0, 0x826B14A0, 0x826B1784,
+  0x826B15C4, 0x826B1784, 0x826B1784, 0x826B1784, 0x826B1784, 0x826B1458, 0x826B160C, 0x826B15D0,
+  0x826B1784, 0x826B1784, 0x826B13B0, 0x826B1784, 0x826B15C8, 0x826B1784, 0x826B1784, 0x826B15DC,
+]
+
+# The independent XenonRecomp pass proved these six retail jump tables are
+# local case bodies split by the generic function-boundary analysis.  Keeping
+# them as explicit ReXGlue tables makes bctr emit a guest switch instead of an
+# indirect host call/return, preserving each function's stack frame and local
+# fall-through semantics.
+[[switch_tables]]
+address = 0x821A7394
+register = 3
+labels = [
+  0x821A7408, 0x821A7408, 0x821A7414, 0x821A7414,
+  0x821A7414, 0x821A7414, 0x821A7414, 0x821A7408,
+  0x821A7414, 0x821A7414, 0x821A7414, 0x821A7414,
+  0x821A7414, 0x821A7414, 0x821A7414, 0x821A7414,
+  0x821A7408, 0x821A7414, 0x821A7414, 0x821A7414,
+  0x821A7408, 0x821A7408, 0x821A7414, 0x821A7414,
+  0x821A7414, 0x821A7408, 0x821A7414, 0x821A7408,
+]
+
+[[switch_tables]]
+address = 0x821A7A8C
+register = 3
+labels = [
+  0x821A7AC8, 0x821A7AC8, 0x821A7ACC, 0x821A7ACC,
+  0x821A7ACC, 0x821A7ACC, 0x821A7ACC, 0x821A7AC8,
+  0x821A7ACC, 0x821A7ACC, 0x821A7ACC, 0x821A7ACC,
+  0x821A7ACC, 0x821A7AC8,
+]
+
+[[switch_tables]]
+address = 0x8223D17C
+register = 10
+labels = [
+  0x8223D1B0, 0x8223D1D8, 0x8223D1D8, 0x8223D1D8,
+  0x8223D1D8, 0x8223D1D8, 0x8223D1D8, 0x8223D1D8,
+  0x8223D1B8, 0x8223D1C0, 0x8223D1C8, 0x8223D1D0,
+]
+
+# A/B omission: 0x82223C00 is a legitimate 49-target local switch, but its
+# unusually wide span can make function-boundary analysis expensive. Restore
+# this table after measuring the bounded codegen without it.
+[[switch_tables]]
+address = 0x82223C00
+register = 11
+labels = [
+  0x82223CC8, 0x82223CF8, 0x82223D28, 0x82223D58,
+  0x822244A8, 0x82223E48, 0x82223E78, 0x82223D88,
+  0x82223DB8, 0x82223E18, 0x82224514, 0x82223EA8,
+  0x82224208, 0x82224238, 0x82224514, 0x82223ED8,
+  0x82223F08, 0x82223DE8, 0x822242F8, 0x82224328,
+  0x82224358, 0x82224388, 0x822243B8, 0x822243E8,
+  0x82224418, 0x82224448, 0x82224478, 0x82224298,
+  0x822242C8, 0x82224268, 0x82223F38, 0x82223F68,
+  0x82223F98, 0x82223FC8, 0x82223FF8, 0x82224514,
+  0x82224514, 0x82224028, 0x82224058, 0x82224088,
+  0x822240B8, 0x822240E8, 0x82224514, 0x82224118,
+  0x82224148, 0x82224178, 0x822241A8, 0x822241D8,
+  0x822244D8,
+]
+
+[[switch_tables]]
+address = 0x8226F214
+register = 11
+labels = [
+  0x8226F24C, 0x8226F264, 0x8226F294, 0x8226F27C,
+  0x8226F2AC, 0x8226F2C4, 0x8226F2DC, 0x8226F354,
+  0x8226F2F4, 0x8226F30C, 0x8226F324, 0x8226F354,
+  0x8226F33C,
+]
+
+[[switch_tables]]
+address = 0x823630D4
+register = 11
+labels = [
+  0x82363110, 0x82363264, 0x82363264, 0x82363264,
+  0x82363264, 0x82363264, 0x8236325C, 0x82363264,
+  0x82363264, 0x82363264, 0x8236323C, 0x82363264,
+  0x82363264, 0x8236325C,
+]
+
+# Netplay input point (our code, src/t6_netplay.h): in the entry builder (PS3 FUN_00186a10) after both 0x4C input
+# entries are built (P1 at r1+80, P2 at r1+156) and before they go to the input manager (sub_823FAA08).
+# Frame boundary for netplay save/load: head of the main loop sub_822198D8 (`while (running) sub_82218C80(root)`, the
+# per-frame task tree step, PS3 FUN_00100250 / rb_frame_step). src/t6_netplay.cpp T6FrameHook.
+[[midasm_hook]]
+address = 0x82219900
+name = "T6FrameHook"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x82268A0C
+name = "T6InputHook"
+registers = ["r1"]
+
+# srand of the game's main LCG (0x828B49E0; called indirectly): seed in r3. T6SeedHook logs it and, for replays and
+# netplay, replaces it with a fixed / agreed seed (src/t6_netplay.cpp).
+[[midasm_hook]]
+address = 0x822658F0
+name = "T6SeedHook"
+registers = ["r3"]
+
+# CRT srand (per-thread rand state at _getptd()+20), called once at boot as srand(time(NULL)) from sub_82254B88:
+# drives random character / stage select and the Arcade CPU opponent.
+[[midasm_hook]]
+address = 0x826A0D78
+name = "T6CrtSeedHook"
+registers = ["r3"]

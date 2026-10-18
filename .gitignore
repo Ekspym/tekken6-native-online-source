@@ -1,0 +1,20 @@
+# The user's game image / extracted data, code generated from it, build outputs
+*.iso
+/game/
+/user/
+/generated/default/*
+!/generated/default/.gitkeep
+/build/
+/out/
+/runs/
+/toolchain/
+*.log
+# The official build's settings and assets (lobby server, release repository, pinned certificate, rank pictures, art)
+/launcher/official.cmake
+/launcher/official.qrc
+/launcher/ranks/
+/launcher/art/
+/launcher/tls/
+/launcher/build*/
+# Settings and logins of a local launcher
+*.ini
