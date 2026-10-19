@@ -11,12 +11,20 @@
 #include "backends/spectator.h"
 #include "ggponet.h"
 
+#if defined(_WINDOWS)
 BOOL WINAPI
 DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
    srand(Platform::GetCurrentTimeMS() + Platform::GetProcessID());
    return TRUE;
 }
+#else
+namespace {
+struct GgpoProcessInit {
+   GgpoProcessInit() { srand(Platform::GetCurrentTimeMS() + Platform::GetProcessID()); }
+} g_ggpo_process_init;
+}
+#endif
 
 void
 ggpo_log(GGPOSession *ggpo, const char *fmt, ...)

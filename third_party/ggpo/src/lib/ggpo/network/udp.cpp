@@ -18,10 +18,12 @@ CreateSocket(uint16 bind_port, int retries)
 
    s = socket(AF_INET, SOCK_DGRAM, 0);
    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *)&optval, sizeof optval);
+#if defined(_WINDOWS)
    setsockopt(s, SOL_SOCKET, SO_DONTLINGER, (const char *)&optval, sizeof optval);
+#endif
 
    // non-blocking...
-   u_long iMode = 1;
+   unsigned long iMode = 1;
    ioctlsocket(s, FIONBIO, &iMode);
 
    sin.sin_family = AF_INET;
@@ -83,7 +85,11 @@ Udp::OnLoopPoll(void *cookie)
 {
    uint8          recv_buf[MAX_UDP_PACKET_SIZE];
    sockaddr_in    recv_addr;
+#if defined(_WINDOWS)
    int            recv_addr_len;
+#else
+   socklen_t      recv_addr_len;
+#endif
 
    for (;;) {
       recv_addr_len = sizeof(recv_addr);
