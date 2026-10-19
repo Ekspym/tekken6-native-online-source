@@ -2,6 +2,7 @@
 
 #include "t6_netplay_internal.h"
 
+#if defined(_WIN32)
 // ---- Host crash report with the guest registers (any access violation in generated code) ----
 namespace t6np {
 LONG WINAPI T6CrashHandler(EXCEPTION_POINTERS* ep) {
@@ -43,3 +44,11 @@ struct T6CrashInstall {
   T6CrashInstall() { AddVectoredExceptionHandler(0, T6CrashHandler); }
 } g_t6_crash_install;
 }  // namespace t6np
+
+#else
+namespace t6np {
+struct T6CrashInstall {
+  T6CrashInstall() { REXLOG_INFO("T6 crash: POSIX signal crash reporter not installed yet"); }
+} g_t6_crash_install;
+}  // namespace t6np
+#endif

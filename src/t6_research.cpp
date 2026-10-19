@@ -15,6 +15,7 @@ uint32_t CwGuestFunc(uintptr_t rip) {
   return it == g_cw.funcs.begin() ? 0 : std::prev(it)->second;
 }
 
+#if defined(_WIN32)
 LONG WINAPI CwHandler(EXCEPTION_POINTERS* ep) {
   const DWORD code = ep->ExceptionRecord->ExceptionCode;
   if (code == EXCEPTION_SINGLE_STEP && t_cw_rearm) {
@@ -75,6 +76,12 @@ void CwStop() {
   g_cw.lo = g_cw.hi = nullptr;
   REXLOG_INFO("T6 custom watch: stopped");
 }
+#else
+void CwStart(uint8_t*, uint32_t rec, uint32_t) {
+  if (rec) REXLOG_WARN("T6 custom watch: host access watch is not yet implemented on Linux native");
+}
+void CwStop() {}
+#endif
 }  // namespace t6w
 
 

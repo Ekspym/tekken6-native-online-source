@@ -1,7 +1,9 @@
 // Tekken 6 netplay - declarations shared by the t6_*.cpp modules (split of t6_netplay.cpp)
 #pragma once
 
+#if defined(_WIN32)
 #include <intrin.h>
+#endif
 #include <ggponet.h>
 #include "t6_common.h"
 #include <rex/cvar.h>
@@ -34,9 +36,11 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#if defined(_WIN32)
 #include <winsock2.h>
 #include <windows.h>
 #include <mmsystem.h>
+#endif
 
 void T6KeepMoney(uint8_t* base);  // t6_watch.cpp (T6_MONEY)
 void T6WatchSave(uint8_t* base);  // t6_watch.cpp (T6_WATCH_SAVE)
@@ -208,7 +212,7 @@ struct PagePool {
   std::vector<uint8_t*> chunks, free;
   uint8_t* Get() {
     if (free.empty()) {
-      uint8_t* c = static_cast<uint8_t*>(_aligned_malloc(256 * 0x1000, 0x1000));
+      uint8_t* c = static_cast<uint8_t*>(T6AlignedAlloc(256 * 0x1000, 0x1000));
       chunks.push_back(c);
       for (int i = 255; i >= 0; i--) free.push_back(c + static_cast<size_t>(i) * 0x1000);
     }
@@ -268,7 +272,7 @@ struct State;
 struct SnapTest;
 
 // ---- shared state and helpers of the modules
-extern std::atomic<HANDLE> g_prof_main;  // t6_session.cpp (T6_PROFILE)
+extern std::atomic<T6ProfileHandle> g_prof_main;  // t6_session.cpp (T6_PROFILE)
 void ProfileThread();  // t6_session.cpp
 void CalibrateFromMap(std::vector<Range>& ranges, std::vector<Range>& exclude, bool with_exclude = true);  // t6_snap_calibrate.cpp
 void SetLocalDelay(int d);  // t6_session.cpp
@@ -451,19 +455,7 @@ struct State {
 // Committed, readable host pages of guest range [lo, hi)
 template <typename Fn>
 void ForEachCommitted(uint32_t lo, uint32_t hi, const Fn& fn) {
-  uint64_t a = lo;
-  while (a < hi) {
-    MEMORY_BASIC_INFORMATION mbi{};
-    if (!VirtualQuery(g_t6_membase + a, &mbi, sizeof(mbi))) break;
-    const uint64_t region_end = static_cast<uint64_t>(reinterpret_cast<uint8_t*>(mbi.BaseAddress) - g_t6_membase) +
-                                mbi.RegionSize;
-    const uint64_t end = std::min<uint64_t>(region_end, hi);
-    if (mbi.State == MEM_COMMIT && !(mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) &&
-        (mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_READONLY))) {
-      fn(static_cast<uint32_t>(a), static_cast<uint32_t>(end - a));
-    }
-    a = end;
-  }
+  T6PlatformForEachReadableRange(g_t6_membase, lo, hi, fn);
 }
 
 struct SnapTest {
