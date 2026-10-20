@@ -9,7 +9,9 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>

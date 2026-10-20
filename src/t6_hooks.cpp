@@ -11,10 +11,16 @@
 void T6FrameHook(PPCRegister& r3) {
   T6SpikeFrameEnd();
   if (static const bool prof = T6Env("T6_PROFILE") != nullptr; prof && !g_prof_main.load()) {
+#if defined(_WIN32)
     HANDLE h = nullptr;
-    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &h, THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0);
+    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &h,
+                    THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0);
     g_prof_main.store(h);
     std::thread(ProfileThread).detach();
+#else
+    g_prof_main.store(1);
+    REXLOG_WARN("T6 profile: Windows suspend/context sampler is not enabled on Linux native");
+#endif
   }
   (void)r3;
   if (!g_t6_membase) return;
@@ -77,13 +83,10 @@ void T6FrameHook(PPCRegister& r3) {
     // T6_TRACE_AFTER_RESTORE=1: full kernel call trace from here on (find hangs / crashes caused by the restore)
     if (T6Env("T6_TRACE_AFTER_RESTORE")) {
       using TraceFn = void (*)(bool);
-      HMODULE mods[] = {GetModuleHandleW(L"rexruntime.dll"), GetModuleHandleW(nullptr)};
-      for (HMODULE m : mods) {
-        if (auto fn = m ? reinterpret_cast<TraceFn>(GetProcAddress(m, "rex_trace_everything")) : nullptr) {
-          fn(true);
-          REXLOG_INFO("T6 snaptest: tracing everything from here");
-          break;
-        }
+      if (auto fn = reinterpret_cast<TraceFn>(T6PlatformSymbol(
+              "rexruntime.dll", "librexruntime.so", "rex_trace_everything"))) {
+        fn(true);
+        REXLOG_INFO("T6 snaptest: tracing everything from here");
       }
     }
   }

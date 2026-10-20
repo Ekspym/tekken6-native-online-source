@@ -455,6 +455,7 @@ void LogSystemOnce() {
   static bool done = false;
   if (done) return;
   done = true;
+#if defined(_WIN32)
   char cpu[49] = {};
   int r[4] = {};
   __cpuid(r, static_cast<int>(0x80000000u));
@@ -478,6 +479,30 @@ void LogSystemOnce() {
               si.dwNumberOfProcessors, ms.ullTotalPhys / 1073741824.0, ms.ullAvailPhys / 1073741824.0, dm.dmPelsWidth,
               dm.dmPelsHeight, dm.dmDisplayFrequency,
               ps.BatteryFlag == 128 || ps.BatteryFlag == 255 ? "no battery" : ps.ACLineStatus == 1 ? "notebook on AC power" : "notebook ON BATTERY");
+#else
+  const long threads = ::sysconf(_SC_NPROCESSORS_ONLN);
+  const long pages = ::sysconf(_SC_PHYS_PAGES);
+  const long avail_pages = ::sysconf(_SC_AVPHYS_PAGES);
+  const long page_size = ::sysconf(_SC_PAGESIZE);
+  const double total_gb = pages > 0 && page_size > 0 ? static_cast<double>(pages) * page_size / 1073741824.0 : 0.0;
+  const double avail_gb = avail_pages > 0 && page_size > 0 ? static_cast<double>(avail_pages) * page_size / 1073741824.0 : 0.0;
+  std::string cpu = "Linux x86_64";
+  if (FILE* f = std::fopen("/proc/cpuinfo", "r")) {
+    char line[512];
+    while (std::fgets(line, sizeof(line), f)) {
+      if (std::strncmp(line, "model name", 10) == 0) {
+        if (char* colon = std::strchr(line, ':')) {
+          cpu = colon + 1;
+          while (!cpu.empty() && (cpu.front() == ' ' || cpu.front() == '\t')) cpu.erase(cpu.begin());
+          while (!cpu.empty() && (cpu.back() == '\n' || cpu.back() == '\r')) cpu.pop_back();
+        }
+        break;
+      }
+    }
+    std::fclose(f);
+  }
+  REXLOG_INFO("T6 system: CPU '{}', {} threads, RAM {:.1f} GB ({:.1f} free), Linux native", cpu, threads, total_gb, avail_gb);
+#endif
 }
 bool StartSession() {
   const NetConfig& c = net_config();
@@ -489,9 +514,13 @@ bool StartSession() {
   // T6_NET_PRIO=1 (experiment): no priority boost for woken threads in this process and the main thread one step
   // above the rest - a worker woken by a semaphore release must not push the main thread off its core.
   if (T6Env("T6_NET_PRIO")) {
+#if defined(_WIN32)
     SetProcessPriorityBoost(GetCurrentProcess(), TRUE);
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
     REXLOG_INFO("T6 net: priority boost off, main thread above normal");
+#else
+    REXLOG_INFO("T6 net: priority override requested; Linux native keeps scheduler policy unchanged");
+#endif
   }
   for (uint32_t& f : g_ring_frame) f = ~0u;
   g_state_rows.clear();
@@ -514,8 +543,10 @@ bool StartSession() {
   cb.advance_frame = cb_advance;
   cb.on_event = cb_event;
   // GGPO expects the application to have started Winsock (RPCS3 did on PS3; without it no socket -> sendto assert)
+#if defined(_WIN32)
   WSADATA wsa{};
   if (const int err = WSAStartup(MAKEWORD(2, 2), &wsa); err != 0) REXLOG_ERROR("T6 net: WSAStartup failed: {}", err);
+#endif
   if (!GGPO_SUCCEEDED(ggpo_start_session(&g_ggpo, &cb, const_cast<char*>("tekken6"), 2, kNetInput, c.local_port))) {
     REXLOG_ERROR("T6 net: ggpo_start_session failed");
     NetStatusError(fmt::format("cannot open UDP port {}", c.local_port));
@@ -784,6 +815,7 @@ void LocalLatched(uint8_t* local) {
 // against the game's own reads: "unseen" = pressed and released with no read of LocalInput in between (the game never
 // had it), "double" = a second press of the same button / direction before the frame's input went out (merged into one
 // press). Every 10 s: "T6 input diag: ..." in the log; every unseen press with its length.
+#if defined(_WIN32)
 void InputDiagThread() {
   using JoyGetPosEx = UINT(WINAPI*)(UINT, LPJOYINFOEX);
   HMODULE mm = LoadLibraryA("winmm.dll");
@@ -853,10 +885,15 @@ void InputDiagThread() {
   }
 }
 
+#else
+void InputDiagThread() { REXLOG_WARN("T6 input diag: WinMM diagnostic sampler is unavailable on Linux native"); }
+#endif
+
 // T6_PROFILE=1 (2026-10-17, user: "jdi na profilovani"): a thread stops the main (game) thread every millisecond and
 // notes where it is - the recompiled guest function (PPCFuncMappings: nearest host start below the address), else the
 // module (runtime / GPU / system DLL) - separately for live and re-simulated (rollback) frames. Every 30 s the top 30 of
 // each go to the log ("T6 profile"). Nothing is allocated while the thread is stopped (no lock it might hold).
+#if defined(_WIN32)
 std::atomic<HANDLE> g_prof_main{nullptr};
 void ProfileThread() {
   std::vector<std::pair<uintptr_t, uint32_t>> fns;  // host start -> guest address
@@ -919,6 +956,11 @@ void ProfileThread() {
     }
   }
 }
+
+#else
+std::atomic<T6ProfileHandle> g_prof_main{0};
+void ProfileThread() { REXLOG_WARN("T6 profile: host thread suspend sampler unavailable on Linux native"); }
+#endif
 
 void LocalInput(uint8_t* out) {
   std::memset(out, 0, kNetInput);
@@ -986,6 +1028,7 @@ void LocalInput(uint8_t* out) {
 // A key held now, or pressed and let go since the last look at it (user 2026-10-17: a press of a few ms between two
 // reads has to count): GetAsyncKeyState's low bit. The first look at a key only primes it, and while the game's window
 // is not in front the keys are looked at (cleared) but count nothing - no old press from another program comes in.
+#if defined(_WIN32)
 bool KeyDown(int vk, bool focus) {
   static bool primed[256] = {};
   const SHORT st = GetAsyncKeyState(vk);
@@ -1033,6 +1076,18 @@ uint16_t KeyboardButtons() {
   }
   return b;
 }
+#else
+bool KeyDown(int, bool) { return false; }
+uint16_t KeyboardButtons() {
+  static bool noted = false;
+  const int keys = T6EnvInt("T6_NET_KEYS", 1);
+  if (keys && !noted) {
+    noted = true;
+    REXLOG_WARN("T6 keyboard fallback: Win32 GetAsyncKeyState path is not yet wired on Linux native; controller/net input remains active");
+  }
+  return 0;
+}
+#endif
 }  // namespace t6np
 
 // The practice paced like the online fight (user 2026-10-14: a video of the same combo in RPCS3 and in our practice -
@@ -1046,7 +1101,7 @@ uint16_t KeyboardButtons() {
 // saturated at +0.25 ms = 59.1 fps (T6_PRACTICE_PACE=2 keeps it, tests). Measured (pace_0 / pace_1, 2026-10-14):
 // sound paced 150-167 of 600 periods over 17.5 ms, max ~20 ms; own clock 0 over 17.5 ms, max 16.7, avg 16.67.
 // T6_PRACTICE_PACE=0 = as before. Every 600 frames "T6 practice frames" = periods of the last 600 frames.
-static void PracticePace() {
+void PracticePace() {
   static const bool practice = T6Env("T6_PRACTICE") != nullptr;
   if (!practice || !g_practice_battle) return;
   static const bool on = T6EnvDefaultOn("T6_PRACTICE_PACE");

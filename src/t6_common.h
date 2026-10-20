@@ -16,11 +16,7 @@
 #include <utility>
 #include <vector>
 
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <winsock2.h>  // (before windows.h: t6_netplay.cpp uses Winsock)
-#include <windows.h>
+#include "t6_platform.h"
 
 extern uint8_t* g_t6_membase;  // t6_netplay.cpp: guest memory base
 extern bool (*g_t6_gpu_idle)();  // t6_netplay.cpp, set by Tekken6App: the GPU executed all submitted commands
@@ -30,8 +26,8 @@ extern void (*g_t6_sys_free)(uint32_t addr);
 extern "C" constinit thread_local unsigned char t6_thread_bit;  // t6_netplay.cpp: 0 on the main (game) thread, 32 elsewhere
 
 // big endian guest word / half word at a guest address
-inline uint32_t T6Rd32(uint32_t a) { return _byteswap_ulong(*reinterpret_cast<const uint32_t*>(g_t6_membase + a)); }
-inline uint16_t T6Rd16(uint32_t a) { return _byteswap_ushort(*reinterpret_cast<const uint16_t*>(g_t6_membase + a)); }
+inline uint32_t T6Rd32(uint32_t a) { return T6ByteSwap32(*reinterpret_cast<const uint32_t*>(g_t6_membase + a)); }
+inline uint16_t T6Rd16(uint32_t a) { return T6ByteSwap16(*reinterpret_cast<const uint16_t*>(g_t6_membase + a)); }
 
 // The process environment is read only after the start (getenv is not safe against a concurrent write of it). The
 // launcher's 'start' line gives match parameters (characters, stage, names ...) at run time: they are kept here and
@@ -73,8 +69,7 @@ inline const char* T6Env(const char* name) {
 }
 // fopen_s: the file or nullptr
 inline FILE* T6Open(const std::string& path, const char* mode) {
-  FILE* f = nullptr;
-  return fopen_s(&f, path.c_str(), mode) == 0 ? f : nullptr;
+  return T6PlatformOpen(path.c_str(), mode);
 }
 
 // a guest byte read as a signed 8-bit value
@@ -131,16 +126,7 @@ inline uint32_t T6EnvU32(const char* name, uint32_t fallback, int base = 0) {
 }
 
 // milliseconds of the performance counter (the frequency read once)
-inline double T6NowMs() {
-  static const double ms_per_tick = [] {
-    LARGE_INTEGER f;
-    QueryPerformanceFrequency(&f);
-    return 1000.0 / static_cast<double>(f.QuadPart);
-  }();
-  LARGE_INTEGER c;
-  QueryPerformanceCounter(&c);
-  return static_cast<double>(c.QuadPart) * ms_per_tick;
-}
+inline double T6NowMs() { return T6PlatformNowMs(); }
 
 // Game memory: the XEX data / bss and the game heaps (what the snapshots and the state hashes cover)
 constexpr uint32_t kT6DataLo = 0x82726000u, kT6DataHi = 0x82DB0000u, kT6HeapLo = 0xA7290000u, kT6HeapHi = 0xABA90000u;
@@ -231,7 +217,7 @@ inline void T6WriteFileAtomic(const std::string& path, const std::string& text) 
   if (FILE* f = T6Open(tmp, "w")) {
     std::fputs(text.c_str(), f);
     std::fclose(f);
-    MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+    T6PlatformReplaceFile(tmp.c_str(), path.c_str());
   }
 }
 
@@ -262,9 +248,9 @@ struct T6RexRuntime {
 inline const T6RexRuntime& T6Rex() {
   static const T6RexRuntime r = [] {
     T6RexRuntime x{};
-    const HMODULE m = GetModuleHandleW(L"rexruntime.dll");
-    const auto get = [m](auto& fn, const char* name) {
-      fn = m ? reinterpret_cast<std::remove_reference_t<decltype(fn)>>(GetProcAddress(m, name)) : nullptr;
+    const auto get = [](auto& fn, const char* name) {
+      fn = reinterpret_cast<std::remove_reference_t<decltype(fn)>>(T6PlatformSymbol(
+          "rexruntime.dll", "librexruntime.so", name));
     };
     get(x.waiters, "rex_waiters");
     get(x.semaphore_count, "rex_semaphore_count");
@@ -286,8 +272,8 @@ inline const T6RexRuntime& T6Rex() {
     get(x.audio_xma_errors, "rex_audio_xma_errors");
     get(x.xma_stats, "rex_xma_stats");
     get(x.sem_stats, "rex_sem_stats");
-    if (const HMODULE gpu = GetModuleHandleW(L"rexgpu-xenos.dll"))
-      x.swap_count = reinterpret_cast<uint32_t (*)()>(GetProcAddress(gpu, "rex_swap_count"));
+    x.swap_count = reinterpret_cast<uint32_t (*)()>(
+        T6PlatformSymbol("rexgpu-xenos.dll", "librexgpu-xenos.so", "rex_swap_count"));
     if (!x.swap_count) get(x.swap_count, "rex_swap_count");
     return x;
   }();
