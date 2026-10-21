@@ -19,13 +19,18 @@ void T6NamePlate(uint8_t* base, uint32_t mgr, uint32_t side, const char* from) {
   const char* name = side == 0 ? T6Env("T6_NAME_P1") : side == 1 ? T6Env("T6_NAME_P2") : nullptr;
   if (from) g_plate_mgr = mgr;
   // (logged once per plate and side: it was called every few ms while a plate is up - half of a player's log, 2026-10-17)
+  // (and at most 8 lines per side per run: the HUD cycles through 5+ plate objects every few ms, so "a new plate" was
+  // true at almost every call - 4577 of 9579 lines of honk's log, 2026-10-20)
   static uint32_t logged_plate[4] = {};
-  const bool new_plate = side < 4 && logged_plate[side] != plate;
-  if (new_plate) logged_plate[side] = plate;
-  if (from && new_plate) REXLOG_INFO("T6 match: name plate from {}: side {} manager {:08X} plate {:08X}{}", from, side, mgr, plate,
-              ok ? fmt::format(" flag {} name '{}' side byte {}", base[plate + 0x88],
-                               std::string(reinterpret_cast<const char*>(base + plate + 0x89), strnlen(reinterpret_cast<const char*>(base + plate + 0x89), 15)),
-                               base[plate + 0x58]) : std::string(" (no plate)"));
+  static uint32_t logged_lines[4] = {};
+  if (from && side < 4 && logged_plate[side] != plate && logged_lines[side] < 8) {
+    logged_plate[side] = plate;
+    REXLOG_INFO("T6 match: name plate from {}: side {} manager {:08X} plate {:08X}{}{}", from, side, mgr, plate,
+                ok ? fmt::format(" flag {} name '{}' side byte {}", base[plate + 0x88],
+                                 std::string(reinterpret_cast<const char*>(base + plate + 0x89), strnlen(reinterpret_cast<const char*>(base + plate + 0x89), 15)),
+                                 base[plate + 0x58]) : std::string(" (no plate)"),
+                ++logged_lines[side] == 8 ? " (the last name plate line of this side in this run)" : "");
+  }
   // Rank byte of the plate (+597, copy +660; rk1: +596 next to it changed nothing in the HUD - sub_82441438 fills
   // +596 / +597 from two per-character byte arrays of the save and copies +597 to +660, and the plate's own code
   // sub_821C0E40 / 0E90 / 11E0 / 15C0 reads +597) from the start line's rank1= / rank2= (T6_RANK_P1 / T6_RANK_P2, the

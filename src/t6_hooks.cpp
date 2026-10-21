@@ -22,9 +22,19 @@ void T6FrameHook(PPCRegister& r3) {
   StanceAudit();
   FightPlayerDump();
   FrameAdvantageTick();
+  PracticeTick();
   if (!g_main_ctx) {
     const auto fn = T6Rex().current_guest_context;
     if (fn) g_main_ctx = static_cast<PPCContext*>(fn());
+  }
+  // The practice gets the session's hang watch too (user 2026-10-20: the practice froze ~2 s after the 17th position
+  // load, nothing in the log - main thread position, critical section owner chain and GPU fences when it stops); it
+  // watches only while the practice battle exists (menus and loading in between are not watched)
+  if (static const bool practice = T6Env("T6_PRACTICE") != nullptr; practice) {
+    static uint32_t practice_boundaries = 0;
+    practice_boundaries++;
+    g_watch_pause = !g_practice_battle;
+    if (g_practice_battle) StartHangWatch(&practice_boundaries);
   }
   t6_thread_bit = 0;
   // Online matches are first to 3 rounds (user 2026-10-11: "musi to byt na 3 vitezne kola"; the game's versus default
@@ -33,6 +43,8 @@ void T6FrameHook(PPCRegister& r3) {
     once = true;
     if (T6Env("T6_NET") && !T6Env("T6_ROUNDS")) T6SetParam("T6_ROUNDS", "3");
   }
+  T6CrowdClockTick();
+  T6PoseDiagFrame();
   T6NetHold();
   if (T6NetFrame()) return;
   T6BattleDump();
@@ -96,6 +108,7 @@ void T6InputHook(PPCRegister& r1) {  if (!g_t6_membase) return;
   uint8_t* p1 = g_t6_membase + r1.u32 + kP1Offset;
   uint8_t* p2 = g_t6_membase + r1.u32 + kP2Offset;
   uint8_t* pads = g_t6_membase + kPadLo;
+  PracticeEntries(p1, p2);  // (the practice tools: recording / playback of the dummy)
 
   if (const char* pm = T6Env("T6_PAGEMAP"); pm && *pm) {
     static uint32_t clear_at = 0, dump_at = 0;

@@ -363,7 +363,10 @@ void Launcher::padPoll()
 		testLog(setDone ? "auto: back to ranked after the set" : "auto: out of the lobby, the opponent left");
 		m_searchAgain.start();
 		if (setDone)
+		{
 			readyAction();  // = "Back to ranked"
+			m_searchAfterPark = false;  // (only a player's own press searches again by itself)
+		}
 		else
 		{
 			const bool inLobby = m_inLobby;
@@ -433,8 +436,11 @@ void Launcher::padPoll()
 	}
 	// --- the confirm button: 1 = Rematch / Next game on the result page, 2 = Search (again) on the mode's page,
 	//     3 = Back to ranked / End match when the set is decided (user 2026-10-16: not only by the mouse or the 4 s wait),
-	//     4 = Accept a found match
+	//     4 = Accept a found match, 5 = Back from a page that says what went wrong (MATCH DID NOT START, OPPONENT
+	//     DISCONNECTED, GAME ENDED - user 2026-10-20: "kdyz neco nevyjde tak tlacitko back se neda ovladat ovladacem")
 	const bool accept = m_confirming && !m_accepted;
+	const bool failBack = !m_inMatch && !m_confirming && !m_punching && !m_resultText.isEmpty() && m_readyBtn &&
+	                      m_readyBtn->isEnabled() && m_pages->currentIndex() == PageVs;
 	const bool rematch = m_readyBtn && m_readyBtn->isEnabled() && m_inMatch && !m_setOver && !m_confirming && m_resultShown &&
 	                     !oppLeft && m_pages->currentIndex() == PageVs;
 	const bool back = setDone && m_readyBtn && m_readyBtn->isEnabled();
@@ -448,13 +454,13 @@ void Launcher::padPoll()
 	// ranked by the controller; the pad is read even when another program has it, hence only in front of the player)
 	const bool again = (m_searchAgain.isValid() || isActiveWindow()) && searchBtn && searchBtn->isEnabled() && !m_inMatch &&
 	                   !m_queued && !m_inLobby && !m_practice;
-	const int target = accept ? 4 : rematch ? 1 : back ? 3 : again ? 2 : 0;
+	const int target = accept ? 4 : rematch ? 1 : back ? 3 : failBack ? 5 : again ? 2 : 0;
 	if (target != m_padTarget)
 	{
 		m_padTarget = target;
 		m_padArmed = false;
 		m_padSince.invalidate();
-		testLog(QString("pad: %1").arg(target == 1 ? "rematch possible" : target == 2 ? "search again possible" : target == 3 ? "back to ranked possible" : target == 4 ? "accept possible" : "off"));
+		testLog(QString("pad: %1").arg(target == 1 ? "rematch possible" : target == 2 ? "search again possible" : target == 3 ? "back to ranked possible" : target == 4 ? "accept possible" : target == 5 ? "back possible" : "off"));
 		if (target != 1)
 			refreshAll();  // (the button's text says the controller can press it)
 	}
@@ -474,14 +480,16 @@ void Launcher::padPoll()
 	if (m_padArmed)
 	{
 		m_padArmed = false;
-		testLog(target == 1 ? "pad rematch: confirm pressed" : target == 3 ? "pad back to ranked: confirm pressed" : target == 4 ? "pad accept: confirm pressed" : "pad search again: confirm pressed");
+		testLog(target == 1 ? "pad rematch: confirm pressed" : target == 3 ? "pad back to ranked: confirm pressed" : target == 4 ? "pad accept: confirm pressed" : target == 5 ? "pad back: confirm pressed" : "pad search again: confirm pressed");
 		if (target == 3)
 		{
 			m_autoLeave.invalidate();
 			m_searchAgain.start();  // (as the automatic leave: on RANKED the next press searches again)
 		}
-		if (target == 1 || target == 3 || target == 4)
-			readyAction();  // (3: = "Back to ranked" / "End match", like the automatic leave; 4: = "Accept")
+		if (target == 5)
+			m_searchAgain.start();  // (back on the mode's page: the next press searches again)
+		if (target == 1 || target == 3 || target == 4 || target == 5)
+			readyAction();  // (3: = "Back to ranked" / "End match", like the automatic leave; 4: = "Accept"; 5: = "Back")
 		else
 		{
 			m_searchAgain.invalidate();

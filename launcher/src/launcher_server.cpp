@@ -71,8 +71,18 @@ void Launcher::serverLost()
 
 void Launcher::send(const QJsonObject& o)
 {
-	if (m_tcp && m_tcp->state() == QAbstractSocket::ConnectedState)
-		m_tcp->write(QJsonDocument(o).toJson(QJsonDocument::Compact) + "\n");
+	if (!m_tcp || m_tcp->state() != QAbstractSocket::ConnectedState)
+		return;
+	// every search says whether this PC is on Wi-Fi now (server 2.3.4: players with the "stable connection" option are
+	// never paired with one) - the searches are sent from several places, the interface may have changed since hello
+	if (o["t"].toString() == "quick" && !o.contains("wifi"))
+	{
+		QJsonObject q = o;
+		q["wifi"] = serverOnWifi();
+		m_tcp->write(QJsonDocument(q).toJson(QJsonDocument::Compact) + "\n");
+		return;
+	}
+	m_tcp->write(QJsonDocument(o).toJson(QJsonDocument::Compact) + "\n");
 }
 
 // The game's log (its end: the last matches) to the server, compressed, in lines the server's connection takes
@@ -83,8 +93,13 @@ void Launcher::sendLog()
 		m_logLabel->setText(T("Not connected to the server."));
 		return;
 	}
+	// the online game's log and, after it, the practice log (2.3.5: practice freezes reach the developers too; not the
+	// newer of the two by time - the parked online game writes its log again right after a practice ends)
 	QFile f(rootFile(QString("runs/online_%1/tekken6.log").arg(g_instance)));
-	if (!f.open(QIODevice::ReadOnly) || f.size() == 0)
+	QFile fp(rootFile(QString("runs/practice_%1/tekken6.log").arg(g_instance)));
+	const bool hasOnline = f.open(QIODevice::ReadOnly) && f.size() > 0;
+	const bool hasPractice = fp.open(QIODevice::ReadOnly) && fp.size() > 0;
+	if (!hasOnline && !hasPractice)
 	{
 		m_logLabel->setText(T("There is no log yet."));
 		return;
@@ -102,10 +117,18 @@ void Launcher::sendLog()
 	                                   .toUtf8();
 	constexpr int kLine = 44000, kLines = 64;  // (the server's limits)
 	QByteArray b64;
+	const auto end = [](QFile& file, qint64 tail) {
+		file.seek(qMax<qint64>(0, file.size() - tail));
+		return file.readAll();
+	};
 	for (qint64 tail = 6 * 1024 * 1024; tail >= 64 * 1024; tail /= 2)
 	{
-		f.seek(qMax<qint64>(0, f.size() - tail));
-		b64 = qCompress(f.readAll() + noteBytes, 9).toBase64();
+		QByteArray data;
+		if (hasOnline)
+			data = end(f, tail);
+		if (hasPractice)
+			data += "\n===== PRACTICE LOG (runs\\practice_" + QByteArray::number(g_instance) + "\\tekken6.log) =====\n" + end(fp, tail / 2);
+		b64 = qCompress(data + noteBytes, 9).toBase64();
 		if (b64.size() <= kLine * kLines)
 			break;
 	}
@@ -125,7 +148,8 @@ void Launcher::sendLog()
 // what the server keeps of this player's choices (sent with 'hello' and every change)
 QJsonObject Launcher::profileMsg() const
 {
-	return {{"t", "profile"}, {"char", m_char}, {"costume", costume(m_char)}, {"custom", customRecord(m_char, costume(m_char))}, {"side", m_side}, {"region", m_region}, {"region_lock", m_regionLock}, {"strict", m_strict}};
+	return {{"t", "profile"}, {"char", m_char}, {"costume", costume(m_char)}, {"custom", customRecord(m_char, costume(m_char))}, {"side", m_side}, {"region", m_region}, {"region_lock", m_regionLock}, {"strict", m_strict},
+	        {"wifi", serverOnWifi()}, {"no_wifi", m_noWifi}};
 }
 
 QJsonObject Launcher::helloMsg() const
@@ -284,7 +308,10 @@ void Launcher::onMessage(const QJsonObject& m)
 			m_ready = false;
 			endRematchStart();  // the opponent left while the rematch was starting
 		}
-		showPage(PageVs);
+		if (searchCandidate())
+			refreshAll();  // (matchmaking: the search page stays until the accept question - 'confirm' shows the VS page)
+		else
+			showPage(PageVs);
 		if (m["quick"].toBool())
 			setReady();  // quick match: start right away
 	}
@@ -498,6 +525,7 @@ void Launcher::onMessage(const QJsonObject& m)
 				});
 			}
 			m_confirmTimer->start(500);
+			matchFound();  // (matchmaking: the candidate's ping was inside both limits - now it is a match)
 			showPage(PageVs);
 			if (!qEnvironmentVariableIsSet("T6_LAUNCHER_NOFOCUS"))
 				toFront();  // (also over the practice window)
@@ -534,6 +562,7 @@ void Launcher::onMessage(const QJsonObject& m)
 		// a lobby stays
 		if (m["match_id"].toString() == m_match["match_id"].toString())
 		{
+			const bool candidate = searchCandidate();  // (before the accept question: nothing is said, the search goes on)
 			closeUdp();
 			m_ready = false;
 			m_confirming = false;
@@ -558,13 +587,14 @@ void Launcher::onMessage(const QJsonObject& m)
 			}
 			// the other side (searching again, before 2.2.4 its own 15 s ran out and showed its reason): the reason on the
 			// search page - its own side's problem if it has one, else the opponent's
-			if (why == "left" && !m["you"].toBool() && m_lobby["queue"].toBool())
+			if (why == "left" && !m["you"].toBool() && m_lobby["queue"].toBool() && !candidate)
 			{
 				const bool own = m_natPort[0] < 0 || m_natPort[0] != m_gamePort;  // (natText: blocked / port changed on this side)
 				m_searchNote = own ? T("The last match did not start: %1").arg(natText())
 				                   : T("The opponent could not connect or left – searching again.");
 			}
 			m_failNote.clear();
+			// a candidate above the max ping: nothing (user 2026-10-20: "lidi nemusi vedet ze to neco odmitlo")
 			if (m_lobby["queue"].toBool())
 			{
 				m_inLobby = false;

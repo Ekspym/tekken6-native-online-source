@@ -106,6 +106,13 @@ QWidget* Launcher::buildPractice()
 	go->addStretch();
 	v->addLayout(go);
 	v->addSpacing(10);
+	// the game's practice tools (src\t6_practice.cpp): own menu on START, quick actions with SELECT held
+	v->addWidget(text(T("Practice tools - press START in the practice for the practice menu: characters, dummy, getting up,\n"
+	                    "counter hit, recordings (3 slots, random playback), block after first hit, positions\n"
+	                    "(up / down a row, left / right a value, cross OK, circle closes).\n"
+	                    "Quick: SELECT + cross = round start, SELECT + down / up = go to / save position,\n"
+	                    "SELECT + square / triangle / circle = playback / record / block after hit.")));
+	v->addSpacing(10);
 	v->addWidget(text(T("The practice ends when an online match starts. To practice while you wait for a match, use \"Practice & search\" on the RANKED or CASUAL page.")));
 	v->addStretch();
 	return c;
@@ -178,6 +185,10 @@ void Launcher::startPractice()
 	env.insert("T6_PLAY_UNTIL", "1630");
 	env.insert("T6_FIX_SEED", "1");
 	env.insert("T6_VIRTUAL_TB", "1");
+	// position slots of the practice tools = the online game's snapshots: same sound separation and exclusions
+	env.insert("T6_SOUND_SEPARATE", "1");
+	if (const QString excl = rootFile("tools/netplay_exclude.txt"); QFile::exists(excl))
+		env.insert("T6_SNAP_EXCLUDE_FILE", QDir::toNativeSeparators(excl));
 	{
 		// the player's costume; the dummy in P1
 		const int c1 = m_practiceSolo ? m_soloChar : m_char, c2 = m_practiceSolo ? m_soloOpp : m_char;

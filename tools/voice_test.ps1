@@ -3,7 +3,7 @@
 # 'state ready'), wait there -Idle1 / -Idle2 seconds, then both get a 'start' line (T6_NET_CMD) like the launcher sends
 # it. Prints the time from 'start' to the session and compares the fight state of both instances.
 param([string]$Name = 'h1', [int]$Seconds = 90, [int]$Idle = 10, [int]$Char1 = 3, [int]$Char2 = 33, [int]$Stage = 5,
-      [int]$Seed = 424242, [int]$LagMs = 0, [string]$InputMode = 'random', [int]$Rounds = 3, [int]$Time = 0, [int]$Rematch = 0, [string]$MenuCmd = 'rematch', [int]$SlowP1 = 0, [int]$SndLife = 0, [int]$BootSeed2 = 0, [string]$Env2 = '', [switch]$NoDiag, [int]$PortBase = 7199, [string]$User1 = 'user', [string]$User2 = 'user2', [string[]]$GameArgs = @())
+      [int]$Seed = 424242, [int]$LagMs = 0, [string]$InputMode = 'random', [int]$Rounds = 3, [int]$Time = 0, [int]$Rematch = 0, [string]$MenuCmd = 'rematch', [int]$SlowP1 = 0, [int]$SndLife = 0, [int]$BootSeed2 = 0, [string]$Env2 = '', [switch]$NoDiag, [int]$PortBase = 7199, [string]$User1 = 'user', [string]$User2 = 'user2', [string[]]$GameArgs = @(), [string]$Exe = '', [string]$GameRoot = '')
 . "$PSScriptRoot\t6_env.ps1"
 # (-PortBase / -User1 / -User2: a second test next to a running one - own UDP ports and profile folders)
 foreach ($u in $User1, $User2) { if (-not (Test-Path "$root\$u")) { Copy-Item -Recurse "$root\user" "$root\$u" } }
@@ -27,9 +27,11 @@ foreach ($p in 1, 2) {
     foreach ($kv in ($Env2 -split ';' | Where-Object { $_ })) { $k, $v = $kv -split '=', 2; if ($p -eq 2) { Set-Item "Env:$k" $v } else { Remove-Item "Env:$k" -ErrorAction SilentlyContinue } }
     if ($SndLife) { $env:T6_SND_LIFE = "$run\snd_life.csv" } else { Remove-Item Env:T6_SND_LIFE -ErrorAction SilentlyContinue }  # (-SndLife 1: one line per sound voice)
     $user = if ($p -eq 1) { "$root\$User1" } else { "$root\$User2" }
-    $a = @("--game_data_root=$root\game", "--user_data_root=$user", "--cache_root=$run\cache", "--log_file=$run\tekken6.log",
+    $a = @("--game_data_root=$(if ($GameRoot) { $GameRoot } else { "$root\game" })", "--user_data_root=$user", "--cache_root=$run\cache", "--log_file=$run\tekken6.log",
            '--fullscreen=false', '--async_shader_compilation=true', '--render_target_path_d3d12=rov', '--input_backend=mmjoystick') + $GameArgs  # (-GameArgs: e.g. the launcher's tearing flag)
-    $proc = Start-Process -FilePath "$root\build\tekken6.exe" -ArgumentList $a -WorkingDirectory "$root\build" -PassThru
+    # (-Exe: another game build, e.g. a player package's relinked native\tekken6.exe; -GameRoot: its game data)
+    $exePath = if ($Exe) { $Exe } else { "$root\build\tekken6.exe" }
+    $proc = Start-Process -FilePath $exePath -ArgumentList $a -WorkingDirectory (Split-Path -Parent $exePath) -PassThru
     Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
         "$root\tools\window_guard.ps1", '-ProcessId', $proc.Id, '-X', (($p - 1) * 660), '-Y', 0, '-Title', 'tekken' | Out-Null
     $procs += $proc

@@ -279,6 +279,7 @@ bool T6NetFrame() {
   // ... and every frame outside the fight proper (game mode != 4: loading, intros, round call, KO, replay, between
   // rounds, result, the menu after the match and the loading of a rematch), whenever it comes in the session.
   const int want = (g_net_frame < lockstep || T6GameMode() != 4) ? 1 : -1;
+  T6PlaybackDiag("live");
   // KO without the hitch (user 2026-10-15: "aby hra nelagla pri KO"): the switch fight -> lockstep at the KO set the
   // longer input delay and prediction 1 in the same frame, so that frame waited for the peer's input of the frames
   // just predicted - one frame of 25-36 ms at 30-60 ms ping, 50-75 ms at 80-110 ms (players' logs 2026-10-15: the

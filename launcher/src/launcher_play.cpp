@@ -26,6 +26,10 @@ QWidget* Launcher::buildMode(bool ranked)
 	charBox->setMinimumWidth(ranked ? 280 : 250);
 	connect(charBox, &QComboBox::activated, this, [this, charBox] { setChar(charBox->currentData().toInt()); });
 	top->addWidget(dropdown(T("Character"), charBox), 0, Qt::AlignTop);
+	auto* lookBox = new QComboBox;
+	lookBox->setMinimumWidth(220);
+	connect(lookBox, &QComboBox::activated, this, [this, lookBox] { pickLook(lookBox->currentData().toInt()); });
+	top->addWidget(dropdown(T("Custom"), lookBox), 0, Qt::AlignTop);  // (user: "napis tam custom ... ne Look")
 	// the side: casual only (ranked sides are random, user 2026-10-18: "ranked si nema moznost vybrat stranu")
 	QComboBox* sideBox = nullptr;
 	if (!ranked)
@@ -64,9 +68,10 @@ QWidget* Launcher::buildMode(bool ranked)
 		sw->setToolTip(T("Never against a player more than 150 MMR above or below you. Finding a match can take longer."));
 		top->addWidget(sw, 0, Qt::AlignTop);
 	}
-	m_syncers.push_back([this, charBox, sideBox, regionBox, pingBox] {
+	m_syncers.push_back([this, charBox, lookBox, sideBox, regionBox, pingBox] {
 		const QSignalBlocker b1(charBox), b3(regionBox), b4(pingBox);
 		charBox->setCurrentIndex(qMax(0, charBox->findData(m_char)));
+		fillLookBox(lookBox);
 		charBox->setRank(m_guest ? QPixmap() : rankIcon(m_rank, 56), m_elo);
 		if (sideBox)
 		{
@@ -102,6 +107,8 @@ QWidget* Launcher::buildMode(bool ranked)
 	connect(find, &QPushButton::clicked, this, [this, ranked] {
 		if (m_queued)
 			send({{"t", "quick_cancel"}});
+		else if (searchCandidate())
+			send({{"t", "leave"}});  // (a candidate whose ping is being measured: the server calls it off)
 		else if (ranked)
 			send({{"t", "quick"}, {"ranked", true}});
 		else
@@ -362,6 +369,12 @@ QWidget* Launcher::buildVs()
 	codeRow->addWidget(m_vsCode);
 	codeRow->addStretch();
 	v->addLayout(codeRow);
+	// opponent on Wi-Fi / Linux: big and red from the first 'hi' through the accept and the match (user 2026-10-19: the
+	// line under the cards showed it for a second only - the accept question replaced it)
+	m_vsPeerWarn = text("", "peerWarn");
+	m_vsPeerWarn->setAlignment(Qt::AlignCenter);
+	m_vsPeerWarn->setVisible(false);
+	v->addWidget(m_vsPeerWarn);
 	m_vsInfo = text("");
 	m_vsInfo->setAlignment(Qt::AlignCenter);
 	v->addWidget(m_vsInfo);
@@ -659,7 +672,7 @@ void Launcher::refreshVs()
 	if (!m_vs)
 		return;
 	QJsonObject p1, p2;
-	QString top, code, info;
+	QString top, code, info, peerWarn;
 	// (m_rematchFlow: from the rematch start to the game's window - the match card stays, never the lobby view while
 	// the game parks and the next start runs, user 2026-10-12)
 	if (m_punching || m_inMatch || m_rematchFlow || !m_resultText.isEmpty())
@@ -670,10 +683,6 @@ void Launcher::refreshVs()
 		info = m_rematchFlow ? T("The rematch is starting…") : m_matchDetail;
 		if (!m_ratedText.isEmpty())
 			info += "   ·   " + m_ratedText;
-		if (m_peerWifi || m_peerLinux)
-			info += "   ·   " + (m_peerWifi && m_peerLinux ? T("Opponent is on Wi-Fi and Linux, the match might lag")
-			                        : m_peerWifi             ? T("Opponent is on Wi-Fi, the match might lag")
-			                                                 : T("Opponent is on Linux, the match might lag"));
 	}
 	else if (m_inLobby)
 	{
@@ -690,6 +699,11 @@ void Launcher::refreshVs()
 			                             : m_lobbyPing == -2 ? T("measuring ping…")
 			                                                 : T("ping not measured (no direct connection yet)"));
 	}
+	// (also while the accept question runs: the 'hi' with wifi / linux came before the ping check that asks it)
+	if ((m_peerWifi || m_peerLinux) && (m_punching || m_confirming || m_inMatch || m_rematchFlow))
+		peerWarn = m_peerWifi && m_peerLinux ? T("OPPONENT IS ON WI-FI AND LINUX – THE MATCH MIGHT LAG")
+		           : m_peerWifi             ? T("OPPONENT IS ON WI-FI – THE MATCH MIGHT LAG")
+		                                    : T("OPPONENT IS ON LINUX – THE MATCH MIGHT LAG");
 	// matchmaking: who the opponent is shows only once both accepted (user 2026-10-12: no dodging by name)
 	// ... and the sides too (user 2026-10-16: "lidi schvalne neprijimaji P2 matche"): this player on the left, no PLAYER 1
 	// / PLAYER 2 sticker, until both accepted ('go'); the game then plays the real sides
@@ -728,6 +742,8 @@ void Launcher::refreshVs()
 	m_vsCode->setVisible(!code.isEmpty());
 	m_vsCodeLabel->setVisible(!code.isEmpty());
 	m_vsInfo->setText(info);
+	m_vsPeerWarn->setText(peerWarn);
+	m_vsPeerWarn->setVisible(!peerWarn.isEmpty());
 	{
 		// (a server before 2.0.3 has no 'stage' in its lobby info: no choice)
 		const bool pick = m_inLobby && m_lobby.contains("stage") && !m_lobby["queue"].toBool() && !m_lobby["ranked"].toBool() &&
@@ -784,7 +800,7 @@ void Launcher::refreshVs()
 	}
 	else if (!m_resultText.isEmpty())
 	{
-		m_readyBtn->setText(T("Back"));
+		m_readyBtn->setText(T("Back  (A / ✕)"));
 		m_readyBtn->setEnabled(true);
 		m_leaveBtn->setEnabled(false);
 	}
@@ -832,6 +848,10 @@ void Launcher::readyAction()
 	}
 	if (m_inMatch && m_setOver)
 	{
+		// "Back to ranked" (user 2026-10-20: "ma se mu okamzite pustit dal vyhledavani ... nemel by muset klikat na search
+		// znova"): the ranked search starts by itself as soon as the game is parked again (gameReady) - not after "End
+		// match" of a lagging set, and not after the automatic leave (padPoll clears it: nobody may be at the PC)
+		m_searchAfterPark = !m_slowEnd;
 		parkGame();  // the game waits for the next match; the player searches again on RANKED
 		selectMode(m_slowEnd ? m_lastMode : PageRanked);  // (below 60 FPS: back where the match came from)
 		return;

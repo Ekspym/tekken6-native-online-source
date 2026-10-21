@@ -12,10 +12,24 @@ cr_as_local = false
 non_argument_as_local = false
 non_volatile_as_local = false
 
+# Speed-ups from github mahmoud-mess/tekken6-recomp (2026-10-17): the guest CRT memcpy / memset run as the host's
+# (SDK src/kernel/crt/memory.cpp REX_HOOK_RAW, guest addresses), and a callback loaded from a 20-byte record and
+# dispatched through CTR is an indirect call (not a switch).
+indirect_calls = [0x82390788]
+
+[rexcrt]
+memcpy = 0x826A1130
+memset = 0x826A03B0
+
 # RexGlue's validation reports these branch targets as tail/secondary
 # functions, while the existing independent XenonRecomp pass already proves
 # each is a real emitted function start in this exact XEX.
 [functions]
+# (mahmoud-mess) high-call-count vector state helpers, audited leaf routines: their non-volatile VMX registers are
+# locals, written back at return (less PPCContext traffic, no localizing across calls)
+"0x82513308" = { name = "sub_82513308", non_volatile_as_local = true }
+"0x82513BC0" = { name = "sub_82513BC0", non_volatile_as_local = true }
+"0x82513BE0" = { name = "sub_82513BE0", non_volatile_as_local = true }
 "0x821927D0" = { name = "sub_821927D0" }
 "0x82192830" = { name = "sub_82192830" }
 "0x82192890" = { name = "sub_82192890" }
@@ -252,3 +266,20 @@ registers = ["r3"]
 address = 0x826A0D78
 name = "T6CrtSeedHook"
 registers = ["r3"]
+
+# Internal 3D resolution (mahmoud-mess/tekken6-recomp, 2026-10-17; src/t6_resolution.cpp): before the two guest stores
+# that initialize / reset 1024x576, and the offscreen target (resource 0x20000004, 1024x1024)
+[[midasm_hook]]
+address = 0x82219DB4
+name = "ApplyTekkenInternalResolution"
+registers = ["r11", "r10"]
+
+[[midasm_hook]]
+address = 0x82219A28
+name = "ApplyTekkenInternalResolution"
+registers = ["r11", "r10"]
+
+[[midasm_hook]]
+address = 0x821AB410
+name = "ApplyTekkenOffscreenResolution"
+registers = ["r3", "r4", "r5"]

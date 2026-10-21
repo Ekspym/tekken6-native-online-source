@@ -298,6 +298,7 @@ bool __cdecl cb_save(unsigned char** buffer, int* len, int* checksum, int frame)
   {
     const double n0 = T6NowMs();
     NoteFightState(static_cast<uint32_t>(frame));
+  T6PoseDiagSave(static_cast<uint32_t>(frame));
     g_note_ms += T6NowMs() - n0;
   }
   static bool logged = false;
@@ -342,6 +343,75 @@ std::string JobQueueState() {
                      qs(0x20100), qs(0x21934), qs(0x23168), qs(0x2499C));
 }
 
+// Noh Theater crash (players 2.3.1-2.3.4, 2026-10-21): sub_822CC9B0 (input playback inside the pad read of a player,
+// gate sub_822CBF28 = *(0x8292E634) == 2) read entry *(P + 8) + side * 16 with P = *(0x8292E638) and *(P + 8) =
+// 3AC90FCC (no guest memory) 0.1-1.5 s after the fight's first prediction frames. Logs the playback globals
+// 0x8292E630-0x8292E657 and P[0..2] whenever they change (live / re-simulated / around loads); at most 400 lines.
+void T6PlaybackDiag(const char* where) {
+  static uint32_t last[13] = {};
+  static int lines = 0;
+  if (lines >= 400) return;
+  uint32_t v[13] = {};
+  for (int i = 0; i < 10; i++) v[i] = T6Rd32(0x8292E630u + 4 * i);
+  const uint32_t p = v[2];
+  if (p >= 0x40000000u && p < 0xA0000000u)
+    for (int i = 0; i < 3; i++) v[10 + i] = T6Rd32(p + 4 * i);
+  if (std::memcmp(v, last, sizeof(v)) == 0) return;
+  std::memcpy(last, v, sizeof(v));
+  lines++;
+  REXLOG_INFO("T6 playback: frame {} {} game mode {}: E630.. {:08X} {:08X} P {:08X} slot {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} | P[0..2] {:08X} {:08X} {:08X}",
+              g_net_frame, where, T6GameMode(), v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], v[12]);
+}
+
+// Noh Theater crash fix: the game's input playback (sub_822CC9B0 in the pad read; on = *(0x8292E634) == 2, set only by
+// sub_822CBFF0 <- sub_823A8538 = vtable 0x8207E6B0 slot 11, reached from sub_8238DE88) replaces a player's pad with
+// recorded entries. An online match never plays back (local Noh runs noh3 / noh4, 11 matches: always 1 = recording),
+// yet the crashing matches had it on with entry pointer 3AC90FCC. In a session the playback cannot start and the gate
+// sub_822CBF28 says "off" (both peers alike = no desync); each blocked case is logged with its guest back chain so
+// players' logs show where it came from.
+std::string GuestChain(uint32_t sp) {
+  std::string chain;
+  for (int i = 0; i < 10 && sp >= 0x70000000u && sp < 0x7FFF0000u; i++) {
+    const uint32_t next = T6Rd32(sp);
+    if (next <= sp || next - sp > 0x10000u) break;
+    chain += fmt::format(" {:08X}", T6Rd32(next - 8));
+    sp = next;
+  }
+  return chain;
+}
+
+}  // namespace t6np
+
+extern "C" void __imp__sub_822CBFF0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822CBFF0(PPCContext& ctx, uint8_t* base) {
+  if (t6np::g_net_started) {
+    static int n = 0;
+    if (n++ < 20)
+      REXLOG_WARN("T6 playback: start blocked in the session, frame {} {} game mode {} lr {:08X} chain:{}", t6np::g_net_frame,
+                  t6np::g_net_resim ? "re-simulated" : "live", T6GameMode(), static_cast<uint32_t>(ctx.lr), t6np::GuestChain(ctx.r1.u32));
+    return;
+  }
+  __imp__sub_822CBFF0(ctx, base);
+}
+
+extern "C" void __imp__sub_822CBF28(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822CBF28(PPCContext& ctx, uint8_t* base) {
+  __imp__sub_822CBF28(ctx, base);
+  if (t6np::g_net_started && ctx.r3.u32) {
+    static int n = 0;
+    if (n++ < 20) {
+      const uint32_t p = T6Rd32(0x8292E638u);
+      REXLOG_WARN("T6 playback: on in the session (8292E634 = {}), read as off; frame {} {} game mode {} P {:08X} P[8] {:08X} lr {:08X} chain:{}",
+                  T6Rd32(0x8292E634u), t6np::g_net_frame, t6np::g_net_resim ? "re-simulated" : "live", T6GameMode(), p,
+                  p >= 0x40000000u && p < 0xA0000000u ? T6Rd32(p + 8) : 0u, static_cast<uint32_t>(ctx.lr), t6np::GuestChain(ctx.r1.u32));
+    }
+    ctx.r3.u64 = 0;
+  }
+}
+
+namespace t6np {
+
+uint32_t g_rb_end = 0;  // the frame the running rollback ends at (its re-simulated frames are the ones before)
 bool __cdecl cb_load(unsigned char* buffer, int) {
   const uint32_t frame = *reinterpret_cast<uint32_t*>(buffer);
   static int logged = 0;
@@ -360,7 +430,9 @@ bool __cdecl cb_load(unsigned char* buffer, int) {
   g_rb_cur = 0;
   const char* const where0 = g_net_where.exchange("load");
   T6VoicesBeforeLoad();
+  T6PlaybackDiag("before load");
   const bool loaded = g_ring[slot]->Load(frame);
+  T6PlaybackDiag("after load");
   g_net_where = where0;
   if (!loaded) {
     // (GGPO ignores the result: the game would go on from a state that is not that frame's = a desync for the rest of
@@ -372,6 +444,7 @@ bool __cdecl cb_load(unsigned char* buffer, int) {
     logged++;
     REXLOG_INFO("T6 net: load of frame {} at frame {}: job queue before {} | after {}", frame, g_net_frame, before, JobQueueState());
   }
+  g_rb_end = g_net_frame;  // (the rollback re-simulates frame .. g_rb_end - 1)
   g_net_frame = frame;
   g_net_loads++;
   return true;
@@ -394,6 +467,7 @@ bool __cdecl cb_advance(int) {
   g_main_phase = 2;
   RunFrame();
   g_main_phase = 0;
+  T6PlaybackDiag("re-simulated");
   g_resim_ms += T6NowMs() - r0;
   g_rbp[1] += T6NowMs() - r0;
   // PS3 FIOS rule: no save with a file request on its way. The live boundary waits for the loader before its save; a
@@ -667,15 +741,15 @@ void RemapPad(uint8_t* g) {
 // reached the game. LocalPoll() reads them again during the waits of the frame (pacing wait, input wait, about every
 // millisecond) and keeps every button / direction newly pressed since the last frame's input; LocalLatched() adds them
 // to the frame's input once. T6_NET_LATCH=0 = off (the old one read per frame).
+// Buttons only (players 2026-10-19: "a different input buffer than the RPCS3 version"): the directions are the frame's
+// own read, as in RPCS3 and on the console. A latched direction / stick peak was added to the next frame although it
+// had been let go by then: every release came a frame late (a one-frame neutral of f,n,f / f,n,d,df / b,b vanished), a
+// roll left the previous direction in the frame (d -> f read as d/f) and a tap between two frames made a direction
+// the game never had in RPCS3.
 uint8_t g_latch[2] = {}, g_last_sent[2] = {};
 std::atomic<uint64_t> g_in_reads{0}, g_in_frames{0};  // T6_INPUT_DIAG (InputDiagThread below)
 std::atomic<uint64_t> g_in_delivered{0};  // presses (new bits of the buttons / d-pad bytes) in the frames' inputs
 std::atomic<double> g_in_last_read_ms{0};
-// The left stick the same way (2026-10-16, players: inputs still missing): of the reads since the last frame the one
-// farthest from the middle per axis (bytes 4-5 x, 6-7 y, big endian), used when the frame's own read is nearer the
-// middle and that one is past the XInput dead zone - a quick flick of the stick between two frames.
-int16_t g_stick_peak[2] = {};
-int16_t Be16(const uint8_t* p) { return static_cast<int16_t>((p[0] << 8) | p[1]); }
 bool LatchOn() {
   static const bool on = T6EnvDefaultOn("T6_NET_LATCH");
   return on;
@@ -688,17 +762,13 @@ void LocalPoll() {
   LocalInput(now);
   g_latch[0] |= now[0] & ~g_last_sent[0];
   g_latch[1] |= now[1] & ~g_last_sent[1];
-  for (int a = 0; a < 2; a++)
-    if (const int16_t v = Be16(now + 4 + 2 * a); std::abs(v) > std::abs(g_stick_peak[a])) g_stick_peak[a] = v;
 }
-// the frame's input: the read of now plus the presses latched since the last frame (a direction latched against the
-// one held now - left + right, up + down - keeps the held one)
-// presses (buttons byte, d-pad byte) added to an input; a direction pair that would end up both pressed (left + right,
-// up + down) keeps what the input itself holds on that axis (both or none held: neutral)
+// presses (buttons byte, START / BACK / stick clicks of the d-pad byte) added to an input; its directions stay as
+// they are (left + right or up + down held at once = neutral on that axis)
 void MergePresses(uint8_t* local, uint8_t b0, uint8_t b1) {
-  uint8_t d = local[1] | b1;
+  uint8_t d = local[1] | (b1 & 0xF0);
   for (const uint8_t axis : {uint8_t{0x0C}, uint8_t{0x03}})
-    if ((d & axis) == axis) d = (d & ~axis) | ((local[1] & axis) == axis ? 0 : (local[1] & axis));
+    if ((d & axis) == axis) d &= ~axis;
   local[0] |= b0;
   local[1] = d;
 }
@@ -762,15 +832,7 @@ void CrtRandSync() {
 void LocalLatched(uint8_t* local) {
   if (LatchOn()) {
     MergePresses(local, g_latch[0], g_latch[1]);
-    for (int a = 0; a < 2; a++) {
-      const int16_t peak = g_stick_peak[a];
-      if (std::abs(peak) > 7849 && std::abs(peak) > std::abs(Be16(local + 4 + 2 * a))) {
-        local[4 + 2 * a] = static_cast<uint8_t>(static_cast<uint16_t>(peak) >> 8);
-        local[5 + 2 * a] = static_cast<uint8_t>(peak);
-      }
-    }
   }
-  g_stick_peak[0] = g_stick_peak[1] = 0;
   if (static const bool diag = T6Env("T6_INPUT_DIAG") != nullptr; diag)
     g_in_delivered.fetch_add(__popcnt((local[0] & ~g_last_sent[0]) & 0xFF) + __popcnt((local[1] & ~g_last_sent[1]) & 0x0F));
   g_latch[0] = g_latch[1] = 0;
@@ -986,13 +1048,15 @@ void LocalInput(uint8_t* out) {
 // A key held now, or pressed and let go since the last look at it (user 2026-10-17: a press of a few ms between two
 // reads has to count): GetAsyncKeyState's low bit. The first look at a key only primes it, and while the game's window
 // is not in front the keys are looked at (cleared) but count nothing - no old press from another program comes in.
-bool KeyDown(int vk, bool focus) {
+// The directions take only "held now" (a key mapped to a direction and a button gives its button for a tap).
+uint16_t KeyBits(int vk, bool focus, uint16_t bits) {
   static bool primed[256] = {};
   const SHORT st = GetAsyncKeyState(vk);
   const bool was_primed = primed[vk & 0xFF];
   primed[vk & 0xFF] = true;
-  if (!focus) return false;
-  return (st & 0x8000) || (was_primed && (st & 1));
+  if (!focus) return 0;
+  if (st & 0x8000) return bits;
+  return was_primed && (st & 1) ? static_cast<uint16_t>(bits & ~0x000F) : 0;
 }
 
 // XINPUT wButtons from the keyboard (T6_NET_KEYS layouts below), 0 when off or the game's window is not in front
@@ -1019,7 +1083,7 @@ uint16_t KeyboardButtons() {
     {
       if (keys == 3) {
         for (const Key& k : custom)
-          if (KeyDown(k.vk, focus)) b |= k.bit;
+          b |= KeyBits(k.vk, focus, k.bit);
         return b;
       }
       static const Key set1[] = {{'W', 0x0001}, {'S', 0x0002}, {'A', 0x0004}, {'D', 0x0008}, {VK_RETURN, 0x0010}, {VK_BACK, 0x0020},
@@ -1027,7 +1091,7 @@ uint16_t KeyboardButtons() {
       static const Key set2[] = {{VK_UP, 0x0001}, {VK_DOWN, 0x0002}, {VK_LEFT, 0x0004}, {VK_RIGHT, 0x0008}, {VK_ADD, 0x0010}, {VK_SUBTRACT, 0x0020},
                                  {VK_NUMPAD1, 0x1000}, {VK_NUMPAD2, 0x2000}, {VK_NUMPAD4, 0x4000}, {VK_NUMPAD5, 0x8000}};
       for (const Key& k : keys == 1 ? set1 : set2) {
-        if (KeyDown(k.vk, focus)) b |= k.bit;
+        b |= KeyBits(k.vk, focus, k.bit);
       }
     }
   }
@@ -1046,7 +1110,7 @@ uint16_t KeyboardButtons() {
 // saturated at +0.25 ms = 59.1 fps (T6_PRACTICE_PACE=2 keeps it, tests). Measured (pace_0 / pace_1, 2026-10-14):
 // sound paced 150-167 of 600 periods over 17.5 ms, max ~20 ms; own clock 0 over 17.5 ms, max 16.7, avg 16.67.
 // T6_PRACTICE_PACE=0 = as before. Every 600 frames "T6 practice frames" = periods of the last 600 frames.
-static void PracticePace() {
+void PracticePace() {
   static const bool practice = T6Env("T6_PRACTICE") != nullptr;
   if (!practice || !g_practice_battle) return;
   static const bool on = T6EnvDefaultOn("T6_PRACTICE_PACE");

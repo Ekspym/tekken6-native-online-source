@@ -282,10 +282,10 @@ index 4d85a2b..f27bfcc 100644
    // Call in implementation-specific initialization.
 diff --git a/include/rex/input/mmjoystick/mmjoystick_input_driver.h b/include/rex/input/mmjoystick/mmjoystick_input_driver.h
 new file mode 100644
-index 0000000..b0b6f69
+index 0000000..1aeda38
 --- /dev/null
 +++ b/include/rex/input/mmjoystick/mmjoystick_input_driver.h
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,63 @@
 +/**
 + * @file        input/mmjoystick/mmjoystick_input_driver.h
 + * @brief       WinMM joystick (joyGetPosEx) input driver - the "MMJoystick" handler of RPCS3, for devices SDL maps
@@ -340,7 +340,6 @@ index 0000000..b0b6f69
 +  std::atomic<bool> poll_stop_{false};
 +  std::mutex latch_mutex_;
 +  uint32_t latched_buttons_ = 0;  // pressed since the last read (WinMM button bits)
-+  uint32_t latched_pov_ = 0xFFFF;  // the last POV direction held since the last read (JOY_POVCENTERED = none)
 +  std::string device_name_;
 +  uint32_t packet_number_ = 0;
 +  // buttons in the order of kButtonNames, then LT, RT, then the 8 stick half-axes
@@ -351,21 +350,43 @@ index 0000000..b0b6f69
 +
 +}  // namespace rex::input::mmjoystick
 diff --git a/include/rex/input/sdl/sdl_input_driver.h b/include/rex/input/sdl/sdl_input_driver.h
-index cf0e3d1..00abb64 100644
+index cf0e3d1..7bba97f 100644
 --- a/include/rex/input/sdl/sdl_input_driver.h
 +++ b/include/rex/input/sdl/sdl_input_driver.h
-@@ -65,6 +65,11 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
+@@ -14,6 +14,7 @@
+ #include <atomic>
+ #include <mutex>
+ #include <optional>
++#include <thread>
+ #include <vector>
+ 
+ #include <rex/input/input_driver.h>
+@@ -65,6 +66,11 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
      bool state_changed;
      bool is_active;
      DeviceId id;
 +    // tekken6-x360 (players 2026-10-16: "inputs don't come out although pressed"): the events of a whole SDL pump are
 +    // applied at once at the next read, so a tap whose DOWN and UP came in one pump never showed. Every button pressed
-+    // since the last read is reported once (pressed_since_read). (The stick is left as it is: a peak there held a released
++    // since the last read is reported once (pressed_since_read; not the d-pad). (The stick is left as it is: a peak there held a released
 +    // direction one more read in the menus / practice.)
 +    uint16_t pressed_since_read = 0;
      // Per pad rather than per guest user, so it survives reassignment.
      KeystrokeState keystroke;
    };
+@@ -95,6 +101,13 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
+   bool SDL_Gamepad_initialized_;
+   std::atomic<int> sdl_events_unflushed_;
+   std::atomic<bool> sdl_pumpevents_queued_;
++  // tekken6-x360 (players 2026-10-19: inputs registered differently than in RPCS3): the pad state only moved on when
++  // a read queued a pump, so a read saw the pad as it was at the previous read (a frame earlier in the practice /
++  // offline, the frame's work earlier online). Like RPCS3's pad thread, a pump is queued every millisecond: a read
++  // sees the pad of ~1-2 ms ago.
++  std::thread pump_thread_;
++  std::atomic<bool> pump_stop_{false};
++  void PumpLoop();
+   // Appended in connection order, never re-sorted, and unbounded: the
+   // assignment decides how many the guest sees.
+   std::vector<ControllerState> controllers_;
 diff --git a/include/rex/ppc/context.h b/include/rex/ppc/context.h
 index 0ede542..b16b994 100644
 --- a/include/rex/ppc/context.h
@@ -6999,10 +7020,10 @@ index 813bb1c..2fa1216 100644
        if (xinput_driver->Setup() == X_STATUS_SUCCESS) {
 diff --git a/src/input/mmjoystick/mmjoystick_input_driver.cpp b/src/input/mmjoystick/mmjoystick_input_driver.cpp
 new file mode 100644
-index 0000000..4df8760
+index 0000000..cdf7946
 --- /dev/null
 +++ b/src/input/mmjoystick/mmjoystick_input_driver.cpp
-@@ -0,0 +1,386 @@
+@@ -0,0 +1,389 @@
 +/**
 + * @file        input/mmjoystick/mmjoystick_input_driver.cpp
 + * @brief       WinMM joystick input driver ("MMJoystick" like RPCS3). Select with --input_backend=mmjoystick.
@@ -7179,12 +7200,11 @@ index 0000000..4df8760
 +  while (!poll_stop_) {
 +    JOYINFOEX info{};
 +    info.dwSize = sizeof(info);
-+    info.dwFlags = JOY_RETURNBUTTONS | JOY_RETURNPOV;
++    info.dwFlags = JOY_RETURNBUTTONS;
 +    if (joyGetPosEx(joy_id_, &info) == JOYERR_NOERROR) {
 +      std::lock_guard<std::mutex> lock(latch_mutex_);
 +      latched_buttons_ |= info.dwButtons & ~prev_buttons;
 +      prev_buttons = info.dwButtons;
-+      if (info.dwPOV != JOY_POVCENTERED) latched_pov_ = info.dwPOV;
 +    }
 +    Sleep(1);
 +  }
@@ -7316,13 +7336,14 @@ index 0000000..4df8760
 +  if (joyGetPosEx(joy_id_, &info) != JOYERR_NOERROR) {
 +    return X_ERROR_DEVICE_NOT_CONNECTED;
 +  }
++  // (tekken6-x360: what the poll thread saw pressed since the last read, see poll_thread_ - for the buttons only. The
++  // directions (d-pad, sticks) are this read alone, as in RPCS3: a held POV kept until the next read delayed every
++  // release by a read, so a one-frame neutral (f,n,f dash, f,n,d,df) became a held direction.)
++  const JOYINFOEX now = info;
 +  {
-+    // (tekken6-x360: what the poll thread saw pressed since the last read, see poll_thread_)
 +    std::lock_guard<std::mutex> lock(latch_mutex_);
 +    info.dwButtons |= latched_buttons_;
-+    if (info.dwPOV == JOY_POVCENTERED && latched_pov_ != JOY_POVCENTERED) info.dwPOV = latched_pov_;
 +    latched_buttons_ = 0;
-+    latched_pov_ = JOY_POVCENTERED;
 +  }
 +  static JOYCAPSW caps{};
 +  static bool caps_ok = false;
@@ -7331,37 +7352,40 @@ index 0000000..4df8760
 +  }
 +
 +  // 0..1 value of one source
-+  const auto value = [&](const Source& s) -> float {
++  const auto value = [&](const Source& s, const JOYINFOEX& in) -> float {
 +    switch (s.kind) {
 +      case Source::Kind::kButton:
-+        return (info.dwButtons >> (s.index - 1)) & 1 ? 1.0f : 0.0f;
++        return (in.dwButtons >> (s.index - 1)) & 1 ? 1.0f : 0.0f;
 +      case Source::Kind::kPov: {
-+        if (info.dwPOV == JOY_POVCENTERED || info.dwPOV > 35900) return 0.0f;
++        if (in.dwPOV == JOY_POVCENTERED || in.dwPOV > 35900) return 0.0f;
 +        // 8-way: a direction is active within +-67.5 degrees (diagonals press both)
 +        const float target = static_cast<float>(s.index) * 9000.0f;
-+        float diff = std::fabs(static_cast<float>(info.dwPOV) - target);
++        float diff = std::fabs(static_cast<float>(in.dwPOV) - target);
 +        diff = std::min(diff, 36000.0f - diff);
 +        return diff <= 6750.0f ? 1.0f : 0.0f;
 +      }
 +      case Source::Kind::kAxisPos:
-+        return caps_ok ? AxisHalf(info, caps, s.index, true) : 0.0f;
++        return caps_ok ? AxisHalf(in, caps, s.index, true) : 0.0f;
 +      case Source::Kind::kAxisNeg:
-+        return caps_ok ? AxisHalf(info, caps, s.index, false) : 0.0f;
++        return caps_ok ? AxisHalf(in, caps, s.index, false) : 0.0f;
 +    }
 +    return 0.0f;
 +  };
-+  const auto level = [&](const Binding& b) {
++  // (the latched read for the buttons, this read for the directions)
++  const auto level = [&](const Binding& b, const JOYINFOEX& in) {
 +    float v = 0.0f;
-+    for (const auto& s : b.sources) v = std::max(v, value(s));
++    for (const auto& s : b.sources) v = std::max(v, value(s, in));
 +    return v;
 +  };
 +
 +  uint16_t buttons = 0;
 +  for (size_t i = 0; i < buttons_.size(); i++) {
-+    if (level(buttons_[i]) > 0.5f) buttons |= kButtons[i].mask;
++    const bool dpad = (kButtons[i].mask & (X_INPUT_GAMEPAD_DPAD_UP | X_INPUT_GAMEPAD_DPAD_DOWN | X_INPUT_GAMEPAD_DPAD_LEFT |
++                                           X_INPUT_GAMEPAD_DPAD_RIGHT)) != 0;
++    if (level(buttons_[i], dpad ? now : info) > 0.5f) buttons |= kButtons[i].mask;
 +  }
 +  const auto stick = [&](size_t neg, size_t pos) {
-+    const float v = level(sticks_[pos]) - level(sticks_[neg]);
++    const float v = level(sticks_[pos], now) - level(sticks_[neg], now);
 +    return static_cast<int16_t>(std::clamp(v, -1.0f, 1.0f) * 32767.0f);
 +  };
 +
@@ -7369,8 +7393,8 @@ index 0000000..4df8760
 +    std::memset(out_state, 0, sizeof(*out_state));
 +    out_state->packet_number = ++packet_number_;
 +    out_state->gamepad.buttons = buttons;
-+    out_state->gamepad.left_trigger = static_cast<uint8_t>(level(triggers_[0]) * 255.0f);
-+    out_state->gamepad.right_trigger = static_cast<uint8_t>(level(triggers_[1]) * 255.0f);
++    out_state->gamepad.left_trigger = static_cast<uint8_t>(level(triggers_[0], info) * 255.0f);
++    out_state->gamepad.right_trigger = static_cast<uint8_t>(level(triggers_[1], info) * 255.0f);
 +    out_state->gamepad.thumb_lx = stick(0, 1);
 +    out_state->gamepad.thumb_ly = stick(2, 3);
 +    out_state->gamepad.thumb_rx = stick(4, 5);
@@ -7390,10 +7414,65 @@ index 0000000..4df8760
 +
 +}  // namespace rex::input::mmjoystick
 diff --git a/src/input/sdl/sdl_input_driver.cpp b/src/input/sdl/sdl_input_driver.cpp
-index c7c440d..19f94be 100644
+index c7c440d..ba3ddbb 100644
 --- a/src/input/sdl/sdl_input_driver.cpp
 +++ b/src/input/sdl/sdl_input_driver.cpp
-@@ -216,6 +216,9 @@ X_RESULT SDLInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
+@@ -20,6 +20,14 @@
+ #include <rex/logging.h>
+ #include <rex/ui/virtual_key.h>
+ 
++#if REX_PLATFORM_WIN32
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#include <timeapi.h>
++#endif
++
+ REXCVAR_DEFINE_STRING(hid_mappings_file, "gamecontrollerdb.txt", "Input",
+                       "Path to SDL gamecontroller mappings file");
+ 
+@@ -41,7 +49,10 @@ SDLInputDriver::SDLInputDriver(rex::ui::Window* window, size_t window_z_order)
+       controllers_(),
+       controllers_mutex_() {}
+ 
+-SDLInputDriver::~SDLInputDriver() {}
++SDLInputDriver::~SDLInputDriver() {
++  pump_stop_ = true;
++  if (pump_thread_.joinable()) pump_thread_.join();
++}
+ 
+ X_STATUS SDLInputDriver::Setup() {
+   if (!TestSDLVersion()) {
+@@ -113,11 +124,27 @@ void SDLInputDriver::OnWindowAvailable(rex::ui::Window* window) {
+         }
+       }
+       REXLOG_INFO("SDL input driver initialized successfully");
++      pump_thread_ = std::thread([this] { PumpLoop(); });
+     });
+   }
+ }
+ 
++void SDLInputDriver::PumpLoop() {
++#if REX_PLATFORM_WIN32
++  timeBeginPeriod(1);  // (Sleep(1) = 1 ms, not the 15.6 ms default)
++#endif
++  while (!pump_stop_) {
++    QueueControllerUpdate();
++    std::this_thread::sleep_for(std::chrono::milliseconds(1));
++  }
++#if REX_PLATFORM_WIN32
++  timeEndPeriod(1);
++#endif
++}
++
+ void SDLInputDriver::OnClosing(rex::ui::UIEvent&) {
++  pump_stop_ = true;
++  if (pump_thread_.joinable()) pump_thread_.join();
+   if (attached_window_) {
+     attached_window_->RemoveListener(this);
+     if (sdl_pumpevents_queued_) {
+@@ -216,6 +243,9 @@ X_RESULT SDLInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
      controller->state_changed = false;
    }
    std::memcpy(out_state, &controller->state, sizeof(*out_state));
@@ -7403,11 +7482,14 @@ index c7c440d..19f94be 100644
    if (!is_active) {
      // Simulate an "untouched" controller. When we become active again the
      // pressed buttons aren't lost and will be visible again.
-@@ -581,6 +584,7 @@ void SDLInputDriver::OnControllerDeviceButtonChangedLocked(const SDL_Event& even
+@@ -581,6 +611,10 @@ void SDLInputDriver::OnControllerDeviceButtonChangedLocked(const SDL_Event& even
        return;
      }
      xbuttons |= xbutton;
-+    controller.pressed_since_read |= xbutton;  // (tekken6-x360: reported at the next read even if released by then)
++    // (tekken6-x360: reported at the next read even if released by then - not the d-pad: a direction is the read alone,
++    // as in RPCS3; a tapped direction kept for a read turned rolls / one-frame neutrals into other directions)
++    if (!(xbutton & (X_INPUT_GAMEPAD_DPAD_UP | X_INPUT_GAMEPAD_DPAD_DOWN | X_INPUT_GAMEPAD_DPAD_LEFT | X_INPUT_GAMEPAD_DPAD_RIGHT)))
++      controller.pressed_since_read |= xbutton;
    } else {
      xbuttons &= ~xbutton;
    }

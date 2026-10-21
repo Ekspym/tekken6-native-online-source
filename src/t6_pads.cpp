@@ -177,10 +177,25 @@ extern "C" void sub_826B58E8(PPCContext& ctx, uint8_t* base) {
     static uint32_t stop = 0;
     static bool in_battle = false;
     if (!stop) stop = state().step;
+    // a new battle asked by the practice menu (another opponent): the game's CHARACTER SELECT was chosen; from here on
+    // the confirms below run again (without the menu downs) until the battle exists, the window stays open
+    static bool old_battle = false;  // (the old battle's task is still there: the new one is not the old one - opp4)
+    if (PracticeTakeRebattle()) {
+      in_battle = false;
+      g_practice_battle = false;
+      old_battle = true;
+      stop = state().step - 130;
+      REXLOG_INFO("T6 practice: new battle asked at step {}", state().step);
+    }
     const uint32_t d = state().step - stop;
-    if (!in_battle && d > 160 && d % 10 == 0 && TaskTreeHas(0x8200C5E8u, 0x8200C5E8u)) {
+    if (old_battle && d % 10 == 0 && !TaskTreeHas(0x8200C5E8u, 0x8200C5E8u)) {
+      old_battle = false;
+      REXLOG_INFO("T6 practice: the old battle is gone at step {}", state().step);
+    }
+    if (!in_battle && !old_battle && d > 160 && d % 10 == 0 && TaskTreeHas(0x8200C5E8u, 0x8200C5E8u)) {
       in_battle = true;
       g_practice_battle = true;
+      PracticeNewBattle();
       REXLOG_INFO("T6 practice: battle at step {} (+{})", state().step, d);
     }
 
@@ -219,6 +234,15 @@ extern "C" void sub_826B58E8(PPCContext& ctx, uint8_t* base) {
       return;
     }
     if (ctx.r3.u32 == 1) {
+      // recording / playback: the dummy is on CONTROLLER, whose pad must be connected - a disconnected opponent's pad
+      // hands the dummy to the game's AI (ai1 2026-10-19: no input for 15 s and it dashed and attacked by itself; user:
+      // "zapne se nejakej NPC"). Neutral here; its inputs are written into its entry at the input hook.
+      if (PracticeDummyPad()) {
+        PadReset(st);
+        if (PracticeDummyStart()) st[5] = 0x10;  // START (low byte of wButtons): the "controller in use" prompt
+        ctx.r3.u64 = 0;
+        return;
+      }
       // T6_PRACTICE_HOLD2=<hex wButtons> (tests): a second pad holding that, e.g. 0008 = back for the dummy (guard) -
       // only does something when the game lets pad 2 move the dummy
       if (static const char* hold2 = T6Env("T6_PRACTICE_HOLD2"); hold2 && *hold2 && g_practice_battle) {
@@ -233,8 +257,10 @@ extern "C" void sub_826B58E8(PPCContext& ctx, uint8_t* base) {
       return;
     }
     __imp__sub_826B58E8(ctx, base);
+    const uint16_t raw = ctx.r3.u32 == 0 ? static_cast<uint16_t>(st[4] << 8 | st[5]) : 0;  // (before the player's layout)
     if (ctx.r3.u32 == 0) RemapPad(st + 4);
     const uint16_t kb = KeyboardButtons();
+    PracticeRawPad(static_cast<uint16_t>(raw | kb));  // (the practice menu goes by the physical buttons + the keyboard)
     if (ctx.r3.u32 != 0 && kb) {  // no controller: the keyboard alone
       PadReset(st);
       ctx.r3.u64 = 0;
@@ -270,6 +296,8 @@ extern "C" void sub_826B58E8(PPCContext& ctx, uint8_t* base) {
         st[4] = static_cast<uint8_t>(b >> 8);
         st[5] = static_cast<uint8_t>(b);
       }
+      PracticeRawPad(static_cast<uint16_t>(st[4] << 8 | st[5]));  // (the test inputs are the "physical" buttons too)
+      PracticePadUser0(st + 4, ctx.r3.u32 == 0);
       return;
     }
     if (static const char* hold = T6Env("T6_PRACTICE_HOLD"); hold && *hold && g_practice_battle) {  // (user 1 returned above)
@@ -288,6 +316,7 @@ extern "C" void sub_826B58E8(PPCContext& ctx, uint8_t* base) {
           REXLOG_INFO("T6 practice: hold {:04X} at step {}, pad {:02X}{:02X}", b, state().step, st[4], st[5]);
       }
     }
+    PracticePadUser0(st + 4, ctx.r3.u32 == 0);  // (BACK shortcuts, recording - after the test inputs above)
     return;
   }
   if (g_park && ctx.r3.u32 < 2) {

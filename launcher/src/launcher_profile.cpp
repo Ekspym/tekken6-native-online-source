@@ -354,6 +354,19 @@ QWidget* Launcher::buildSettings()
 		pOnline->addLayout(settingRow(T("Strict matchmaking"),
 		                              {strict, hintText(T("Ranked: never against a player more than 150 MMR above or below you. Finding a match can take longer."))}));
 	}
+	// (user 2026-10-20: "button ... Super secret option for stable connection a kdyz na to klikne tak mu to napise now
+	// you cant match with wifi players") - a click turns it on / off; the server then never pairs this player with one
+	// on Wi-Fi in ranked / player matches
+	{
+		auto* secret = button(T("Super secret option for stable connection"), "ghost");
+		connect(secret, &QPushButton::clicked, this, [this] {
+			m_noWifi = !m_noWifi;
+			settings().setValue("no_wifi_mm", m_noWifi);
+			sendProfile();
+			notify(QMessageBox::Information, m_noWifi ? T("Now you can't match with Wi-Fi players.") : T("You can match with Wi-Fi players again."));
+		});
+		pOnline->addLayout(settingRow(T("Stable connection"), {secret}));
+	}
 	// preferred side (player 1 = left, player 2 = right) in player matches and lobbies for fun; ranked sides are random
 	{
 		auto* box = choiceBox({{T("Random"), 0}, {T("Left (P1)"), 1}, {T("Right (P2)"), 2}}, m_side, 170);
@@ -507,7 +520,7 @@ QString Launcher::rankName() const
 void Launcher::syncSettings()
 {
 	if (m_authed && !m_guest)
-		send({{"t", "settings"}, {"data", QJsonObject{{"char_index", m_char}, {"costumes", m_costumes}, {"delay", m_delay}, {"keys", m_keys}, {"max_ping", m_maxPing}, {"side", m_side}, {"region", m_region}, {"region_lock", m_regionLock}, {"strict", m_strict}}}});
+		send({{"t", "settings"}, {"data", QJsonObject{{"char_index", m_char}, {"costumes", m_costumes}, {"delay", m_delay}, {"keys", m_keys}, {"max_ping", m_maxPing}, {"side", m_side}, {"region", m_region}, {"region_lock", m_regionLock}, {"strict", m_strict}, {"no_wifi", m_noWifi}}}});
 }
 
 void Launcher::applySettings(const QJsonObject& st)
@@ -536,6 +549,8 @@ void Launcher::applySettings(const QJsonObject& st)
 	m_region = st["region"].toString(m_region);
 	m_regionLock = st["region_lock"].toBool(m_regionLock);
 	m_strict = st["strict"].toBool(m_strict);
+	m_noWifi = st["no_wifi"].toBool(m_noWifi);
+	s.setValue("no_wifi_mm", m_noWifi);
 	s.setValue("region", m_region);
 	s.setValue("region_lock", m_regionLock);
 	s.setValue("strict_mm", m_strict);

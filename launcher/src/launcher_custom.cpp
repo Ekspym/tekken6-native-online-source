@@ -38,6 +38,43 @@ void Launcher::refreshCostume()
 	}
 }
 
+// The Look choice next to the character on the Ranked / Casual pages (user 2026-10-20: "hned vedle characteru udelat
+// customizace vyber"): the costumes of the character, and each costume with a custom look once more as "my custom
+// look"; data = costume * 2 + 1 for the custom look. The same settings as Profile -> Costume / Look.
+void Launcher::fillLookBox(QComboBox* box) const
+{
+	const QSignalBlocker b(box);
+	box->clear();
+	const int n = p3Code(m_char) ? 3 : hasCostumes(m_char) ? 2 : 1;
+	for (int k = 0; k < n; k++)
+	{
+		box->addItem(n == 1 ? T("Normal") : T("P%1 costume").arg(k + 1), k * 2);
+		if (validRecord(storedRecord(m_char, k)))
+			box->addItem(n == 1 ? T("My custom look") : T("P%1 – my custom look").arg(k + 1), k * 2 + 1);
+	}
+	const int k = costume(m_char);
+	box->setCurrentIndex(qMax(0, box->findData(k * 2 + (validRecord(customRecord(m_char, k)) ? 1 : 0))));
+	box->setEnabled(box->count() > 1);
+}
+
+void Launcher::pickLook(int look)
+{
+	const int k = look / 2;
+	if (hasCostumes(m_char) && k)
+		m_costumes[QString::number(m_char)] = k;
+	else
+		m_costumes.remove(QString::number(m_char));
+	const QString key = QString("%1_%2").arg(m_char).arg(k);
+	if (look & 1)
+		m_customOff.remove(key);
+	else if (validRecord(storedRecord(m_char, k)))
+		m_customOff[key] = true;
+	settings().setValue("costumes", QJsonDocument(m_costumes).toJson(QJsonDocument::Compact));
+	settings().setValue("custom_looks_off", QJsonDocument(m_customOff).toJson(QJsonDocument::Compact));
+	refreshCostume();
+	sendProfile();
+}
+
 QString Launcher::customRecord(int index, int k) const
 {
 	if (!kCustomLooks || m_customOff.contains(QString("%1_%2").arg(index).arg(k)))

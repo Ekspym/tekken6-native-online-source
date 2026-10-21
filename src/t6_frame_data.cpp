@@ -154,25 +154,46 @@ static int AutoHandOver(uint32_t pl, uint32_t opp) {
   return best;
 }
 
-std::atomic<int> g_t6_fa_value{0};      // last measured advantage, player 1's side
-std::atomic<uint32_t> g_t6_fa_tick{0};  // GetTickCount of that measurement, 0 = none yet
-// Startup of player 1's last attack: the frame of the move in which +0x228 turned non-zero (the attack became active;
-// jab: frame 10). Shown also when the attack misses.
-std::atomic<int> g_t6_fa_startup{0};
-std::atomic<uint32_t> g_t6_fa_flag{0};  // player 2's +0x228 at the measurement (0x10000 = hit)
-std::atomic<uint32_t> g_t6_fa_startup_tick{0};
-void FrameAdvantageTick() {
-  static const bool on = T6Env("T6_FRAME_DATA") != nullptr;
-  if (!on) return;
-  static uint32_t prev_id[2] = {};
-  static uint32_t prev_at[2] = {};
-  static uint32_t prev_hit[2] = {};
+// Per attacking side (user 2026-10-20: "chtel bych jeste frame data opponenta"): [0] player 1's attacks, [1] the
+// opponent's (the dummy's playback / recording, counter attacks); values from the attacker's side (+ = he acts first).
+std::atomic<int> g_t6_fa_value[2]{};      // last measured advantage
+std::atomic<uint32_t> g_t6_fa_tick[2]{};  // GetTickCount of that measurement, 0 = none yet
+// Startup of the side's last attack: the frame of the move in which it became active (jab: frame 10). Shown also when
+// the attack misses.
+std::atomic<int> g_t6_fa_startup[2]{};
+std::atomic<uint32_t> g_t6_fa_flag[2]{};  // the defender's +0x228 at the measurement (0x10000 = hit)
+std::atomic<uint32_t> g_t6_fa_startup_tick[2]{};
+// Tekken 8 style details of that attack (user 2026-10-20): the move struct's attack level word (+0x10), its active
+// frames (+0x4C first, +0x50 last) and the damage (+0x1AC of the player)
+std::atomic<uint32_t> g_t6_fa_level[2]{};
+std::atomic<uint32_t> g_t6_fa_active[2]{};  // first << 16 | last active frame, 0 = not known
+std::atomic<int> g_t6_fa_damage[2]{};
+// The measurement of one attacking side A against the defender B = 1 - A (written for player 1 against the dummy,
+// 2026-10-13 / 14; both sides since 2026-10-20). Its state between frames:
+struct FaState {
+  uint32_t prev_id[2] = {}, prev_at[2] = {}, prev_hit[2] = {};  // (by player, not by role)
+  uint32_t prev_active = 0;
+  bool counted = false;    // this move of the attacker already gave its number
+  bool act = false;        // the attacker's current move has had an active frame
+  bool was_act = false;    // ... the move of the frame before
+  uint32_t prev_t0 = 0, prev_t1 = 0;
+  int prev_rem0 = 0, follow = 0;
+  int64_t fr = 0, free0 = -1, free1 = 0;  // frame count; players' "can act" frames of the pending number
+  int64_t last_act = 0;                    // the attacker's last active frame of the move (so far)
+  bool stance = false;     // in a move without damage since the attack (not a string's next hit)
+  int64_t wfree = -1;      // pending whiff: frame the attacker can act
+  int auto_at = 0x7FFFFFFF;
+  int64_t wlast = 0;
+  uint32_t wid = 0;
+  uint32_t flag = 0, conn_id = 0;
+};
+static void MeasureSide(FaState& S, int A) {
+  const int B = 1 - A;
   uint32_t pl[2], id[2], t[2], len[2], dmg[2], hit[2];
   // "Player 1's attack is active": +0x238 == 10 (3 from the start of an attack move, 10 from its active frame - on
   // hit, on block and when it misses; 7 at the start of the second punch of Lee's 1,2 and 10 again from its active
   // frame; 16 / 12 / 0 afterwards). Not +0x228: it stays 0x100 through a whole string. Not +0x1D0 (jab 8, Lee's
   // second punch 10, Jin's kick 19): that is only set when the attack HITS - with it nothing was shown on block.
-  static uint32_t prev_active = 0;
   for (int n = 0; n < 2; n++) {
     pl[n] = T6PlayerPtr(n);
     if (!T6PlayerObjectOk(pl[n])) return;
@@ -185,21 +206,28 @@ void FrameAdvantageTick() {
   // player 1's attack became active: the move struct's active frames (+0x4C first, +0x50 last; Wang's ws4 527 and
   // qcf+2 611 never set +0x238 = 10 - user 2026-10-14: "u wanga to neukazuje ws4 ani qcf2"); +0x238 only without a
   // struct
-  uint32_t active = T6Rd32(pl[0] + 0x238) == 10u ? 1u : 0u;
-  if (const uint32_t mv = T6Rd32(pl[0] + 0x104); (mv >= 0xA7290000u && mv + 0x58u <= 0xABA90000u) || (mv >= 0x82726000u && mv + 0x58u <= 0x82DB0000u)) {
+  uint32_t active = T6Rd32(pl[A] + 0x238) == 10u ? 1u : 0u;
+  uint32_t level = 0, span = 0;
+  if (const uint32_t mv = T6Rd32(pl[A] + 0x104); (mv >= 0xA7290000u && mv + 0x58u <= 0xABA90000u) || (mv >= 0x82726000u && mv + 0x58u <= 0x82DB0000u)) {
     const uint32_t a0 = T6Rd32(mv + 0x4C), a1 = T6Rd32(mv + 0x50);
-    active = (a0 != 0 && a0 <= a1 && a1 < 1000 && t[0] >= a0 && t[0] <= a1) ? 1u : 0u;
+    active = (a0 != 0 && a0 <= a1 && a1 < 1000 && t[A] >= a0 && t[A] <= a1) ? 1u : 0u;
+    level = T6Rd32(mv + 0x10);
+    if (a0 != 0 && a0 <= a1 && a1 < 1000) span = a0 << 16 | a1;
   }
-  const bool became_active = prev_at[0] == pl[0] && dmg[0] != 0 && active != 0 && prev_active == 0;
-  prev_active = active;
-  if (became_active && t[0] < 1000) {
-    g_t6_fa_startup.store(static_cast<int>(t[0]));
-    g_t6_fa_startup_tick.store(GetTickCount() | 1u);
-    REXLOG_INFO("T6 frame data: player 1 move {} active at frame {}", id[0], t[0]);
+  const bool became_active = S.prev_at[A] == pl[A] && dmg[A] != 0 && active != 0 && S.prev_active == 0;
+  S.prev_active = active;
+  if (became_active && t[A] < 1000) {
+    g_t6_fa_startup[A].store(static_cast<int>(t[A]));
+    g_t6_fa_level[A].store(level);
+    g_t6_fa_active[A].store(span);
+    g_t6_fa_damage[A].store(static_cast<int>(dmg[A]));
+    g_t6_fa_startup_tick[A].store(GetTickCount() | 1u);
+    REXLOG_INFO("T6 frame data: player {} move {} active at frame {} (level {:08X}, active {}-{}, damage {})", A + 1, id[A], t[A], level,
+                span >> 16, span & 0xFFFF, dmg[A]);
   }
-  // Player 1's attack connected: the dummy's reaction starts (its move changes, or the same reaction starts again:
-  // its frame counter goes back) while player 1's move has been active. Only this way round: the dummy does not
-  // attack.
+  // The attacker's attack connected (written as player 1 against the dummy; the same for the other side): the
+  // defender's reaction starts (its move changes, or the same reaction starts again: its frame counter goes back)
+  // while the attacker's move has been active.
   //  - Jin's kicks change into their "it hit" move in the frame the dummy reacts (514 -> 515, damage 0, the frame
   //    counter runs on): the move stays "has been active" until its counter restarts.
   //  - A blocked attack: the dummy is in move 306 for ONE frame, then in the guard reaction proper (jab: 427, 18
@@ -215,117 +243,112 @@ void FrameAdvantageTick() {
   //    nothing): StanceActFrame. So the number waits until player 1 can act: his frame reaches the connected move's
   //    +0x1E8, or before that his move changes into a move without an attack (not a string's next attack, not Jin's
   //    "it hit" move whose counter runs on) and he reaches its first button frame.
-  static bool counted = false;   // this move of player 1 already gave its number
-  static bool act = false;       // player 1's current move has had an active frame
-  static bool was_act = false;   // ... the move of the frame before
-  static uint32_t prev_t0 = 0, prev_t1 = 0;
-  static int prev_rem0 = 0, follow = 0;
-  static int64_t fr = 0, free0 = -1, free1 = 0;  // frame count; players' "can act" frames of the pending number
-  static int64_t last_act = 0;                     // player 1's last active frame of the move (so far)
-  fr++;
-  const bool new_move = t[0] < prev_t0;
+  S.fr++;
+  const bool new_move = t[A] < S.prev_t0;
   // The counter: once player 1 is out of the attack in a move without damage (a stance / transition, counter from 1)
   // or back in a neutral state (id >= 0x8000), ask the game every frame when a plain button would take effect
   // (CanAct); the earliest answer lowers the pending "can act" frames (the attack's own +0x1E8 is the start).
-  static bool stance = false;   // in a move without damage since the attack (not a string's next hit)
-  static int64_t wfree = -1;    // pending whiff: frame player 1 can act
-  const bool stance_before = stance;
-  if (new_move) stance = dmg[0] == 0;
+  const bool stance_before = S.stance;
+  if (new_move) S.stance = dmg[A] == 0;
   int64_t can = -1;
-  if (stance || id[0] >= 0x8000u) {
-    const int e = id[0] >= 0x8000u ? static_cast<int>(t[0]) : CanAct(pl[0], pl[1], t[0]);
-    if (e >= 0) can = fr + e - static_cast<int>(t[0]);
+  if (S.stance || id[A] >= 0x8000u) {
+    const int e = id[A] >= 0x8000u ? static_cast<int>(t[A]) : CanAct(pl[A], pl[B], t[A]);
+    if (e >= 0) can = S.fr + e - static_cast<int>(t[A]);
   }
   // he started an attack out of the stance (or out of the attack at / after its automatic hand-over): he could act at
   // the latest the frame before
-  static int auto_at = 0x7FFFFFFF;
-  if (new_move && dmg[0] != 0 && (stance_before || static_cast<int>(prev_t0) > auto_at)) can = fr - 1;
-  if (can >= 0 && free0 > can) free0 = can;
-  if (can >= 0 && wfree > can) wfree = can;
+  if (new_move && dmg[A] != 0 && (stance_before || static_cast<int>(S.prev_t0) > S.auto_at)) can = S.fr - 1;
+  if (can >= 0 && S.free0 > can) S.free0 = can;
+  if (can >= 0 && S.wfree > can) S.wfree = can;
   const int64_t stance_free = -1;
   // Whiff (user 2026-10-14: "netrefujes opponenta a ukazujes frame data ... mas ukazovat max na whiff ... - recovery"):
   // an attack move that was active and connected with nothing shows only its recovery - the frames from its last
   // active frame (move struct) until player 1 can act (its +0x1E8, or a stance's first button frame), as -N.
   // A string's next attack started before that: nothing (the string goes on).
-  static int64_t wlast = 0;
-  static uint32_t wid = 0;
-  if (act && !counted && (new_move ? dmg[0] == 0 : (t[0] >= len[0] && prev_t0 < len[0]))) {
+  if (S.act && !S.counted && (new_move ? dmg[A] == 0 : (t[A] >= len[A] && S.prev_t0 < len[A]))) {
     // natural end: now; into a stance: the counter decides (at the latest when he starts something)
-    wfree = new_move ? std::min<int64_t>(fr + 1000, can >= 0 ? can : fr + 1000) : fr;
-    wlast = last_act;
-    wid = new_move ? prev_id[0] : id[0];
-    counted = true;
+    S.wfree = new_move ? std::min<int64_t>(S.fr + 1000, can >= 0 ? can : S.fr + 1000) : S.fr;
+    S.wlast = S.last_act;
+    S.wid = new_move ? S.prev_id[A] : id[A];
+    S.counted = true;
   }
-  if (wfree >= 0 && fr >= wfree) {
-    const int rec = static_cast<int>(wfree - wlast);
-    g_t6_fa_value.store(-rec);
-    g_t6_fa_flag.store(0xFFFFFFFFu);
-    g_t6_fa_tick.store(GetTickCount() | 1u);
-    REXLOG_INFO("T6 frame data: player 1 whiffed with move {} (now move {} frame {}): recovery {}", wid, id[0], t[0], rec);
-    wfree = -1;
+  if (S.wfree >= 0 && S.fr >= S.wfree) {
+    const int rec = static_cast<int>(S.wfree - S.wlast);
+    g_t6_fa_value[A].store(-rec);
+    g_t6_fa_flag[A].store(0xFFFFFFFFu);
+    g_t6_fa_tick[A].store(GetTickCount() | 1u);
+    REXLOG_INFO("T6 frame data: player {} whiffed with move {} (now move {} frame {}): recovery {}", A + 1, S.wid, id[A], t[A], rec);
+    S.wfree = -1;
   }
   if (new_move) {
-    act = false;
-    counted = false;
+    S.act = false;
+    S.counted = false;
   }
-  if (active != 0) last_act = fr;
-  if (active != 0) act = true;
-  const bool attacking = act || (new_move && was_act);
-  const int rem0 = (new_move && !act) ? prev_rem0 - 1 : static_cast<int>(len[0]) - static_cast<int>(t[0]);
-  const bool reaction = prev_at[1] == pl[1] && id[1] != 0x8001u && (id[1] != prev_id[1] || t[1] < prev_t1) && len[1] < 1000 &&
-                        (hit[1] & 0x10000u);  // (really hit / blocked: not the dummy walking or crouching after a whiff)
-  static uint32_t flag = 0, conn_id = 0;
+  if (active != 0) S.last_act = S.fr;
+  if (active != 0) S.act = true;
+  const bool attacking = S.act || (new_move && S.was_act);
+  const int rem0 = (new_move && !S.act) ? S.prev_rem0 - 1 : static_cast<int>(len[A]) - static_cast<int>(t[A]);
+  const bool reaction = S.prev_at[B] == pl[B] && id[B] != 0x8001u && (id[B] != S.prev_id[B] || t[B] < S.prev_t1) && len[B] < 1000 &&
+                        (hit[B] & 0x10000u);  // (really hit / blocked: not the dummy walking or crouching after a whiff)
   // Knockdown / launch / crumple (user 2026-10-14: qcf+2 showed +9, the list KD): on hit the number waits until the
   // dummy's reaction is over (free1 + 1); is he not standing or crouching then (0x8001 / 0x8002), the overlay shows
   // "KD" (flag 0xFFFFFFFE) - the reaction's +0x1E8 is not when he can act.
   const auto publish = [&] {
-    const int adv = static_cast<int>(free1 - free0);
-    const int dummy_can = id[1] >= 0x8000u ? static_cast<int>(t[1]) : CanAct(pl[1], pl[0], t[1]);
+    const int adv = static_cast<int>(S.free1 - S.free0);
+    const int dummy_can = id[B] >= 0x8000u ? static_cast<int>(t[B]) : CanAct(pl[B], pl[A], t[B]);
     // (neutral ids: only standing 0x8001 / crouching 0x8002 count as up - 0x8006 after Wang's qcf+2 is on the ground; a
     //  reaction move past its +0x1E8 the game lets him act from - Hwoarang's 2: 919 - is not a knockdown)
-    const bool up = id[1] >= 0x8000u ? (id[1] == 0x8001u || id[1] == 0x8002u) : (dmg[1] != 0 || dummy_can == static_cast<int>(t[1]));  // (attacking = up)
-    const bool kd = !(flag & 1) && fr > free1 && !up;
+    const bool up = id[B] >= 0x8000u ? (id[B] == 0x8001u || id[B] == 0x8002u) : (dmg[B] != 0 || dummy_can == static_cast<int>(t[B]));  // (attacking = up)
+    const bool kd = !(S.flag & 1) && S.fr > S.free1 && !up;
     if (T6Env("T6_FRAME_DATA_DEBUG"))
-      REXLOG_INFO("T6 frame data: dummy at publish: move {} t {} len {} can act at {}", id[1], t[1], len[1], dummy_can);
-    g_t6_fa_value.store(adv);
-    g_t6_fa_flag.store(kd ? 0xFFFFFFFEu : flag);
-    g_t6_fa_tick.store(GetTickCount() | 1u);
-    REXLOG_INFO("T6 frame data: player 1 {} with move {} (now move {} frame {}): advantage {:+d}{}", (flag & 1) ? "blocked" : "hit",
-                conn_id, id[0], t[0], adv, kd ? fmt::format(" -> knockdown (dummy in move {})", id[1]) : std::string());
-    free0 = -1;
+      REXLOG_INFO("T6 frame data: dummy at publish: move {} t {} len {} can act at {}", id[B], t[B], len[B], dummy_can);
+    g_t6_fa_value[A].store(adv);
+    g_t6_fa_flag[A].store(kd ? 0xFFFFFFFEu : S.flag);
+    g_t6_fa_tick[A].store(GetTickCount() | 1u);
+    REXLOG_INFO("T6 frame data: player {} {} with move {} (now move {} frame {}): advantage {:+d}{}", A + 1, (S.flag & 1) ? "blocked" : "hit",
+                S.conn_id, id[A], t[A], adv, kd ? fmt::format(" -> knockdown (dummy in move {})", id[B]) : std::string());
+    S.free0 = -1;
   };
-  if (follow > 0) {
-    follow--;
+  if (S.follow > 0) {
+    S.follow--;
     if (reaction) {
-      free1 = fr + static_cast<int>(len[1]) - static_cast<int>(t[1]);
-      if (T6Env("T6_FRAME_DATA_DEBUG")) REXLOG_INFO("T6 frame data: reaction again fr {} P2 move {} t {} len {} -> free {}", fr, id[1], t[1], len[1], free1);
+      S.free1 = S.fr + static_cast<int>(len[B]) - static_cast<int>(t[B]);
+      if (T6Env("T6_FRAME_DATA_DEBUG")) REXLOG_INFO("T6 frame data: reaction again fr {} P2 move {} t {} len {} -> free {}", S.fr, id[B], t[B], len[B], S.free1);
     }
-    if ((hit[1] & 1) && !(flag & 1)) flag = hit[1];  // (the block bit comes a frame later)
-  } else if (!counted && attacking && reaction && len[0] < 1000) {
+    if ((hit[B] & 1) && !(S.flag & 1)) S.flag = hit[B];  // (the block bit comes a frame later)
+  } else if (!S.counted && attacking && reaction && len[A] < 1000) {
     // (a reaction credited to the move of the frame before - the next attack of a string has just started - must not
     //  use up the new move's own number: Lee's 1,2 showed the jab's number and never the second punch's)
-    if (!(new_move && !act)) counted = true;
-    if (free0 >= 0) publish();  // the string's next hit connected before player 1 could act after the last one
-    free0 = fr + rem0;
-    auto_at = (new_move && !act) ? 0x7FFFFFFF : AutoHandOver(pl[0], pl[1]);
-    free1 = fr + static_cast<int>(len[1]) - static_cast<int>(t[1]);
+    if (!(new_move && !S.act)) S.counted = true;
+    if (S.free0 >= 0) publish();  // the string's next hit connected before player 1 could act after the last one
+    S.free0 = S.fr + rem0;
+    S.auto_at = (new_move && !S.act) ? 0x7FFFFFFF : AutoHandOver(pl[A], pl[B]);
+    S.free1 = S.fr + static_cast<int>(len[B]) - static_cast<int>(t[B]);
     if (T6Env("T6_FRAME_DATA_DEBUG"))
-      REXLOG_INFO("T6 frame data: connect fr {} P1 move {} t {} len {} -> free {} | P2 move {} t {} len {} -> free {}", fr, id[0], t[0], len[0],
-                  free0, id[1], t[1], len[1], free1);
-    flag = hit[1];
-    conn_id = (new_move && !act) ? prev_id[0] : id[0];
-    follow = 3;  // (306 = the one frame before the guard reaction: the reaction of the next frames counts)
+      REXLOG_INFO("T6 frame data: connect fr {} P1 move {} t {} len {} -> free {} | P2 move {} t {} len {} -> free {}", S.fr, id[A], t[A], len[A],
+                  S.free0, id[B], t[B], len[B], S.free1);
+    S.flag = hit[B];
+    S.conn_id = (new_move && !S.act) ? S.prev_id[A] : id[A];
+    S.follow = 3;  // (306 = the one frame before the guard reaction: the reaction of the next frames counts)
   }
-  if (free0 >= 0 && follow == 0 && fr >= free0 && ((flag & 1) || fr > free1)) publish();
-  prev_t0 = t[0];
-  prev_t1 = t[1];
-  prev_rem0 = static_cast<int>(len[0]) - static_cast<int>(t[0]);
-  was_act = act;
+  if (S.free0 >= 0 && S.follow == 0 && S.fr >= S.free0 && ((S.flag & 1) || S.fr > S.free1)) publish();
+  S.prev_t0 = t[A];
+  S.prev_t1 = t[B];
+  S.prev_rem0 = static_cast<int>(len[A]) - static_cast<int>(t[A]);
+  S.was_act = S.act;
   for (int n = 0; n < 2; n++) {
-    prev_id[n] = id[n];
-    prev_at[n] = pl[n];
-    prev_hit[n] = hit[n];
+    S.prev_id[n] = id[n];
+    S.prev_at[n] = pl[n];
+    S.prev_hit[n] = hit[n];
   }
+}
+
+void FrameAdvantageTick() {
+  static const bool on = T6Env("T6_FRAME_DATA") != nullptr;
+  if (!on) return;
+  static FaState side[2];
+  MeasureSide(side[0], 0);
+  MeasureSide(side[1], 1);
 }
 
 // T6_STANCE_AUDIT=1 (tests, 2026-10-14, user: "tohle musis uz hledat sam ... nemuzu tu projizdet vsechny stance"):

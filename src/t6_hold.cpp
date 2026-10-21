@@ -305,11 +305,11 @@ extern "C" void sub_821C6598(PPCContext& ctx, uint8_t* base) {
 }
 
 // Stage music off (T6_NO_MUSIC=1, launcher option; user 2026-10-15: "aby se dala vypnout stage music aby lidi mohli mit
-// treba vlastni"). The Xbox 360 way: the system's music category volume. The game's XAudio2 asks the kernel for voice
-// category 1 (background music) every pass (sub_8267BF10: XAudioGetVoiceCategoryVolume(1, &v) -> engine +524, applied
-// to the music voices of the list +508), the volume the console sets while the player plays his own music. The SDK
-// export always answers 1.0; with the option category 1 answers 0. Only the volume of the music voices changes: the
-// XAudio2 memory is the library's own heap (live, not in the snapshot / state hash), the game logic never reads it.
+// treba vlastni"). The Xbox 360 way: the system's music category volume, the one the console sets while the player
+// plays his own music. The SDK export always answers 1.0; with the option category 1 (background music) answers 0.
+// Its reader is the render driver below (sub_824EFC58, change mask); sub_8267BF10 (XAudio2 engine +524) asks it too
+// but never ran in a practice fight (mus1, 2026-10-19). Only the volume of the music changes: the sound library's
+// memory is live, not in the snapshot / state hash, the game logic never reads it.
 extern "C" void __imp__XAudioGetVoiceCategoryVolume(PPCContext& ctx, uint8_t* base) {
   static const bool no_music = T6Env("T6_NO_MUSIC") != nullptr;
   const uint32_t category = ctx.r3.u32, out = ctx.r4.u32;
@@ -322,6 +322,19 @@ extern "C" void __imp__XAudioGetVoiceCategoryVolume(PPCContext& ctx, uint8_t* ba
     logged = true;
     REXLOG_INFO("T6 music: stage music off (category {} volume 0)", category);
   }
+  ctx.r3.u64 = 0;
+}
+
+// The render driver (sub_824EFC58, ~190 times a second) asks for a category's volume only when the change mask has
+// the category's bit (bit 0 = category 0, bit 1 = category 1 music) - the console sets it when the player starts his
+// own music. The SDK always answers 0, so the 0 above was never asked for: 2.2.0-2.3.0 played the music anyway (user
+// 2026-10-19). With T6_NO_MUSIC the music bit is set every pass. Measured (practice, stage 1, output RMS): music on
+// 0.031, off 0.009 (the stage sounds and effects stay).
+extern "C" void __imp__XAudioGetVoiceCategoryVolumeChangeMask(PPCContext& ctx, uint8_t* base) {
+  static const bool no_music = T6Env("T6_NO_MUSIC") != nullptr;
+  SwitchToThread();  // (the SDK export's yield: the driver polls it in a loop)
+  if (const uint32_t out = ctx.r4.u32)
+    *reinterpret_cast<uint32_t*>(base + out) = _byteswap_ulong(no_music ? 2u : 0u);
   ctx.r3.u64 = 0;
 }
 

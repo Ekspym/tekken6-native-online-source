@@ -33,16 +33,13 @@ void Launcher::startMatch(const QJsonObject& m)
 	// the online game takes over (its window shows at the loading); matchmaking: only once both accepted (launchGame)
 	if (!m_lobby["queue"].toBool())
 		stopPractice();
-	// a new match (not the rematch both players asked for): chime + taskbar flash while the launcher is not in front
-	if (m_matchSound && !(m_inMatch && m_rematchWanted))
-	{
-		playMatchSound();
-		if (!isActiveWindow())
-		{
-			FLASHWINFO fw{sizeof(FLASHWINFO), reinterpret_cast<HWND>(winId()), FLASHW_TRAY | FLASHW_TIMERNOFG, 0, 0};
-			FlashWindowEx(&fw);
-		}
-	}
+	// a new match (not the rematch both players asked for): chime + taskbar flash while the launcher is not in front.
+	// Matchmaking: not yet - the pair is only a candidate until the ping is measured (user 2026-10-19: players of the
+	// same region with a low max ping got the gong and the connecting page for every candidate above their limit);
+	// the chime comes with 'confirm' (matchFound), the punch and the ping run quietly on the search page.
+	const bool candidate = m_lobby["queue"].toBool() && !m_inMatch;
+	if (!candidate && !(m_inMatch && m_rematchWanted))
+		matchFound();
 	m_match = m;
 	m_role = m["role"].toInt();
 	m_ready = false;
@@ -86,7 +83,8 @@ void Launcher::startMatch(const QJsonObject& m)
 	m_pingClock.start();
 	m_matchDetail = T("Connecting to the opponent…");
 	m_matchErr = false;
-	showPage(PageVs);
+	if (!candidate)
+		showPage(PageVs);
 	if (m_udp)
 		m_udp->deleteLater();
 	m_udp = new QUdpSocket(this);
@@ -368,6 +366,21 @@ QString Launcher::natText() const
 
 void Launcher::punchFailed(const QString& why)
 {
+	// a queue candidate (before the accept question): nothing shown, the search simply goes on (user 2026-10-20: "proste
+	// hledas dal ... lidi nemusi vedet ze to neco odmitlo") - the server does not requeue the one who left, so this side
+	// asks for the queue again right after its 'leave'
+	if (searchCandidate())
+	{
+		const bool ranked = m_lobby["ranked"].toBool();
+		closeUdp();
+		send({{"t", "leave"}});
+		if (ranked)
+			send({{"t", "quick"}, {"ranked", true}});
+		else
+			send({{"t", "quick"}});
+		refreshAll();
+		return;
+	}
 	closeUdp();
 	m_failNote = why;  // (the server's 'cancel' for this 'leave' keeps it on the page)
 	send({{"t", "leave"}});
@@ -385,6 +398,11 @@ void Launcher::autoQuick()
 	send({{"t", "quick"}});
 }
 
+bool Launcher::serverOnWifi() const
+{
+	return m_tcp && m_tcp->state() == QAbstractSocket::ConnectedState && localIsWifi(m_tcp->localAddress());
+}
+
 void Launcher::endOpponentGone()
 {
 	if (!m_game)
@@ -392,6 +410,19 @@ void Launcher::endOpponentGone()
 	m_oppGone = true;
 	m_disconnected = true;
 	killGame("the opponent left (server)");
+}
+
+// a match is really found: chime + taskbar flash while the launcher is not in front
+void Launcher::matchFound()
+{
+	if (!m_matchSound)
+		return;
+	playMatchSound();
+	if (!isActiveWindow())
+	{
+		FLASHWINFO fw{sizeof(FLASHWINFO), reinterpret_cast<HWND>(winId()), FLASHW_TRAY | FLASHW_TIMERNOFG, 0, 0};
+		FlashWindowEx(&fw);
+	}
 }
 
 void Launcher::playMatchSound()
@@ -412,7 +443,12 @@ bool Launcher::onWifi(const QHostAddress& to)
 {
 	QUdpSocket s;
 	s.connectToHost(to, 7701);
-	const QHostAddress local = s.localAddress();
+	return localIsWifi(s.localAddress());
+}
+
+// the interface that owns this local address is Wi-Fi
+bool Launcher::localIsWifi(const QHostAddress& local)
+{
 	if (local.isNull())
 		return false;
 	for (const QNetworkInterface& i : QNetworkInterface::allInterfaces())

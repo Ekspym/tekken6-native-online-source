@@ -11,9 +11,15 @@
 // { lock 0x827D83A4; voice->vtbl[n](voice, ...); unlock }, voice in r3: in a netplay run a voice whose first word is
 // not a vtable in the image is not touched and the call returns XAUDIO2_E_INVALID_CALL.
 namespace t6np {
+// online and in the practice: the practice tools' position slots load states tens of seconds old (user 2026-10-19:
+// the practice crashed in XAudio2 sub_824EED98 on a voice with the first word 0x3F800000 right after a slot load)
+bool VoiceGuardOn() {
+  static const bool on = net_config().enabled || T6Env("T6_PRACTICE") != nullptr;
+  return on;
+}
 uint64_t g_stale_voice_calls = 0;
 bool StaleVoice(PPCContext& ctx, uint8_t* base, uint32_t fn) {
-  if (!net_config().enabled) return false;
+  if (!VoiceGuardOn()) return false;
   const uint32_t v = ctx.r3.u32;
   // only pointers into the voice heap are judged (sub_824EEDE0 gets a parameter block on the stack in r3)
   if (v < 0x30000000u || v >= 0x40000000u) return false;
@@ -55,7 +61,7 @@ void SetDead(uint32_t a, bool dead) {
   if (dead) g_dead[a] = g_net_frame; else g_dead.erase(a);
 }
 bool DeadCall(PPCContext& ctx, uint8_t* base, uint32_t fn, uint32_t result) {
-  if (!net_config().enabled) return false;
+  if (!VoiceGuardOn()) return false;
   const uint32_t v = ctx.r3.u32;
   if (v != 0 && !Dead(v) && !StaleVoice(ctx, base, fn)) return false;
   if (T6LogSample(g_dead_calls, 20, 1000)) {
@@ -173,14 +179,14 @@ extern "C" void sub_824EE840(PPCContext& ctx, uint8_t* base) {
       }
     }
   }
-  if (net_config().enabled && ctx.r3.u32 == 0) SetDead(v, true);
+  if (VoiceGuardOn() && ctx.r3.u32 == 0) SetDead(v, true);
 }
 extern "C" void __imp__sub_82583C88(PPCContext& ctx, uint8_t* base);
 extern "C" void sub_82583C88(PPCContext& ctx, uint8_t* base) {
   if (DeadCall(ctx, base, 0x82583C88u, 0)) return;
   const uint32_t v = ctx.r3.u32;
   __imp__sub_82583C88(ctx, base);
-  if (net_config().enabled) SetDead(v, true);
+  if (VoiceGuardOn()) SetDead(v, true);
 }
 // get voice of an MMC library object: a dead object hands out no voice
 extern "C" void __imp__sub_82583FB0(PPCContext& ctx, uint8_t* base);
@@ -225,7 +231,7 @@ void T6VoiceCreated(uint32_t fn, uint32_t out, PPCContext& ctx, uint8_t* base, u
     l.resim = g_net_resim;
     if (out >= 4 && PageReadable((out - 4) >> 12)) std::memcpy(l.entry, base + out - 4, 64);
   }
-  if (net_config().enabled) g_dead.erase(v);
+  if (VoiceGuardOn()) g_dead.erase(v);
 }
 // Voices orphaned by a rollback (vl3, 2026-10-12: the CnuSound voice entries sit in the game heap, AB9F60xx, stride
 // 0x40 - a snapshot load rewinds them, the voices themselves are live). A sound whose voice was created in a discarded
@@ -484,7 +490,7 @@ extern "C" void __imp__sub_82341C88(PPCContext& ctx, uint8_t* base);
 extern "C" void sub_82341C88(PPCContext& ctx, uint8_t* base) {
   const uint32_t self = ctx.r3.u32;
   __imp__sub_82341C88(ctx, base);
-  if (net_config().enabled && self) {
+  if (VoiceGuardOn() && self) {
     if (const uint32_t obj = T6Rd32(self + 284)) SetDead(obj, false);
   }
 }

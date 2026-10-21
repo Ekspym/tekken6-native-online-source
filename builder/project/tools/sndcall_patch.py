@@ -5,7 +5,7 @@
 #  - direct calls and indirect calls (vtables) from game code into the sound library go through t6_snd_call
 #    (src/t6_netplay.cpp): live frames run and record the call (result + writes into restored memory), re-simulated
 #    frames replay it, so the library - which is not rolled back - sees every action once.
-import glob, re, sys
+import glob, pathlib, re, sys
 
 # MMC (0x82338000-0x82358000) is NOT library: its MMC_TCB_* objects are game tasks in the task tree (excluding
 # their bytes broke the tree: endless recursion in sub_822190B8). Like PS3: game sound objects roll back, bnus doesn't.
@@ -64,27 +64,22 @@ def in_ranges(a, rs):
 
 d = sys.argv[1]
 pch = d + '/tekken6_pch.h'
-s = open(pch, encoding='utf-8').read()
+s = pathlib.Path(pch).read_text(encoding='utf-8')
 if 'T6 sound boundary' not in s:
-    open(pch, 'w', encoding='utf-8').write(s + PCH_BLOCK)
+    pathlib.Path(pch).write_text(s + PCH_BLOCK, encoding='utf-8')
 
 FUNC = re.compile(r'DEFINE_REX_FUNC\(sub_([0-9A-F]{8})\) \{\n\tREX_FUNC_PROLOGUE\(\);')
 CALL = re.compile(r'\b(sub_([0-9A-F]{8}))\(ctx, base\);')
 nf = ndirect = nind = 0
 for p in sorted(glob.glob(d + '/tekken6_recomp.*.cpp')):
-    s = open(p, encoding='utf-8').read()
+    s = pathlib.Path(p).read_text(encoding='utf-8')
     if 'T6_CAPFN(' in s:
         continue
-    out = []
-    pos = 0
-    for m in FUNC.finditer(s):
-        out.append(s[pos:m.end()])
-        pos = m.end()
     # split per function: rebuild with per-function processing
     parts = re.split(r'(?=DEFINE_REX_FUNC\(sub_[0-9A-F]{8}\) \{)', s)
     res = []
     for part in parts:
-        m = re.match(r'DEFINE_REX_FUNC\(sub_([0-9A-F]{8})\) \{\n\tREX_FUNC_PROLOGUE\(\);', part)
+        m = FUNC.match(part)
         if not m:
             res.append(part)
             continue
@@ -110,5 +105,5 @@ for p in sorted(glob.glob(d + '/tekken6_recomp.*.cpp')):
                 nind += k
                 part = part.replace('REX_CALL_INDIRECT_FUNC(', 'T6_SND_INDIRECT(')
         res.append(part)
-    open(p, 'w', encoding='utf-8').write(''.join(res))
+    pathlib.Path(p).write_text(''.join(res), encoding='utf-8')
 print(f'{d}: {nf} functions, {ndirect} direct game->sound calls, {nind} indirect call sites in game code')

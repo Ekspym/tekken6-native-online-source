@@ -3,7 +3,7 @@
 # (__sync_bool_compare_and_swap). Without this the page map (pagemap_patch.py) and the per-save dirty map missed
 # every page the game only writes with VMX or dcbz (11029 + 95 + ~230 sites). Run after pagemap_patch.py:
 #   python -I tools/rawstore_patch.py generated/default
-import glob, re, sys
+import glob, pathlib, re, sys
 
 d = sys.argv[1]
 pats = [
@@ -13,7 +13,7 @@ pats = [
 ]
 n = 0
 for p in sorted(glob.glob(d + '/tekken6_recomp.*.cpp')):
-    s = open(p, encoding='utf-8').read()
+    s = pathlib.Path(p).read_text(encoding='utf-8')
     if 'T6 raw stores marked' in s:
         continue
     out = []
@@ -25,5 +25,5 @@ for p in sorted(glob.glob(d + '/tekken6_recomp.*.cpp')):
                 n += 1
                 break
         out.append(line)
-    open(p, 'w', encoding='utf-8').write('// T6 raw stores marked (tools/rawstore_patch.py)\n' + '\n'.join(out))
+    pathlib.Path(p).write_text('// T6 raw stores marked (tools/rawstore_patch.py)\n' + '\n'.join(out), encoding='utf-8')
 print(f'{d}: {n} raw stores marked')

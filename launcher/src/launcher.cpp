@@ -53,6 +53,7 @@ Launcher::Launcher()
 	m_region = s.value("region", guessRegion()).toString();
 	m_regionLock = s.value("region_lock", false).toBool();
 	m_strict = s.value("strict_mm", false).toBool();
+	m_noWifi = s.value("no_wifi_mm", false).toBool();
 	m_clientId = s.value("client_id").toString();
 	if (m_clientId.isEmpty())
 	{
@@ -485,7 +486,7 @@ void Launcher::showPage(Page p)
 		p = PageLogin;
 	// in a lobby / match the VS screen stays in front (the profile and the settings can still be opened)
 	const bool aside = p == PageProfile || p == PageSettings;
-	if ((m_inLobby || m_punching || m_inMatch || !m_resultText.isEmpty()) && !aside)
+	if ((m_inLobby || m_punching || m_inMatch || !m_resultText.isEmpty()) && !aside && !searchCandidate())
 		p = PageVs;
 	m_pages->setCurrentIndex(p);
 	// top bar: the mode, SETTINGS on the settings page, nothing on the profile (the name opened it)
@@ -546,7 +547,9 @@ void Launcher::refreshAll()
 		                            .arg(charName(m_char)).arg(m_elo).arg(r["wins"].toInt()).arg(r["losses"].toInt()).arg(m_games).arg(m_wins));
 	}
 	const bool idle = m_online && !m_inLobby && !m_inMatch && !m_punching && m_gameReady;
-	const bool qRanked = m_queued && m_queuedRanked, qQuick = m_queued && !m_queuedRanked;
+	const bool cand = searchCandidate();
+	const bool qRanked = (m_queued && m_queuedRanked) || (cand && m_lobby["ranked"].toBool()),
+	           qQuick = (m_queued && !m_queuedRanked) || (cand && !m_lobby["ranked"].toBool());
 	// The game starts in the background when the launcher opens (half a minute, longer at the first start after an
 	// update). Until then nothing can be searched or started - and the player has to SEE why (user 2026-10-14):
 	// the buttons say it with the seconds, the pages explain it, the lobby buttons carry it as their tool tip.
@@ -559,11 +562,11 @@ void Launcher::refreshAll()
 	const QString prepBtn = prep ? T("Preparing the game…") : QString();
 	const QString prepWhy = T("The game is starting in the background and compiling its shaders. Searching, lobbies and the practice unlock as "
 	                          "soon as it is ready - usually within half a minute; the first start after an update takes longer.");
-	m_quickBtn->setEnabled(idle && !qRanked);
+	m_quickBtn->setEnabled((idle || cand) && !qRanked);
 	// the controller's confirm button searches: "again" after a match, else while the launcher is in front (padPoll)
 	const bool padSearch = m_padTarget == 2, padAgain = padSearch && m_searchAgain.isValid();
 	m_quickBtn->setText(prep ? prepBtn : qQuick ? T("Cancel search  (B / ○)") : padAgain ? T("Search again  (A / ✕)") : padSearch ? T("Find casual match  (A / ✕)") : T("Find casual match"));
-	m_rankedBtn->setEnabled(idle && !qQuick && !m_guest);
+	m_rankedBtn->setEnabled((idle || cand) && !qQuick && !m_guest);
 	m_rankedBtn->setText(prep ? prepBtn : qRanked ? T("Cancel search  (B / ○)") : padAgain ? T("Search again  (A / ✕)") : padSearch ? T("Find ranked match  (A / ✕)") : T("Find ranked match"));
 	for (QPushButton* b : {m_quickBtn, m_rankedBtn, m_createBtn, m_joinBtn})
 		if (b)

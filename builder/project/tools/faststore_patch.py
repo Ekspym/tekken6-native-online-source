@@ -5,7 +5,7 @@
 #    or recorded) the store skips the page marks, the fine map and the sound capture; any other r1 takes the full path
 #  - the value watches (t6_watch_on at every store, t6_rwatch_on at every load) are compiled in only with
 #    -DT6_WATCH_BUILD (they are diagnostics; the flag test alone ran at every guest memory access)
-import glob, re, sys
+import glob, pathlib, re, sys
 
 d = sys.argv[1]
 MARK = '// T6 stack stores (tools/faststore_patch.py)'
@@ -34,21 +34,23 @@ direct = re.compile(r'\bREX_STORE_U(8|16|32|64)\(ctx\.r1\.u32 \+ ')
 update = re.compile(r'(ea = -?\d+ \+ ctx\.r1\.u32;\r?\n\s*)REX_STORE_U(32|64)\(ea, ')
 n = 0
 for p in sorted(glob.glob(d + '/tekken6_recomp.*.cpp')):
-    s = open(p, encoding='utf-8', newline='').read()
+    with open(p, encoding='utf-8', newline='') as fh:
+        s = fh.read()
     if MARK in s:
         continue
     s, a = direct.subn(r'T6_STORE_SP_U\1(ctx.r1.u32 + ', s)
     s, b = update.subn(r'\1T6_STORE_SP_U\2(ea, ', s)
     n += a + b
-    open(p, 'w', encoding='utf-8', newline='').write(MARK + '\n' + s)
+    pathlib.Path(p).write_text(MARK + '\n' + s, encoding='utf-8', newline='')
 print(f'{d}: {n} stack stores')
 
 p = d + '/tekken6_pch.h'
-s = open(p, encoding='utf-8', newline='').read()
+with open(p, encoding='utf-8', newline='') as fh:
+    s = fh.read()
 if 'tools/faststore_patch.py' not in s:
     # appended at the end: it has to come after the sound boundary's T6_STORE_WATCH / T6_CAP and the load watch
     # (where the other patch tools put their blocks depends on the order they ran in)
     nl = '\r\n' if '\r\n' in s else '\n'
     s = s.rstrip('\r\n') + nl + PCH_BLOCK.replace('\n', nl)
-    open(p, 'w', encoding='utf-8', newline='').write(s)
+    pathlib.Path(p).write_text(s, encoding='utf-8', newline='')
     print('pch patched')

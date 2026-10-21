@@ -2,6 +2,8 @@
 
 #include "launcher.h"
 
+#include <utility>
+
 // the match is over because the opponent left: game closed (no forfeit of this side), message on the VS page
 // A line of the launcher in the game's log (m_gameLog): why the launcher ended the game, how the game process ended
 void Launcher::appendGameLog(const QString& line)
@@ -331,6 +333,8 @@ void Launcher::gameReady()
 		setReady();
 	}
 	autoQuick();
+	if (std::exchange(m_searchAfterPark, false) && m_online && !m_queued && !m_inLobby && !m_inMatch && !m_practice)
+		send({{"t", "quick"}, {"ranked", true}});  // (after "Back to ranked")
 	refreshAll();
 }
 
@@ -520,6 +524,10 @@ void Launcher::pollStatus()
 	// against a standing opponent - it ends here with a message (user 2026-10-12)
 	if (disconnected && m_inMatch && m_game && !m_rematchWanted && winner.isEmpty())
 	{
+		// the server decides who left (user 2026-10-19: the one who stayed got no points): the opponent's launcher
+		// does not report the same within 10 s = it left; both report it = the path broke, not rated
+		if (m_playingSent && !m_hadResult)
+			send({{"t", "opp_gone"}, {"match_id", m_match["match_id"].toString()}});
 		endOpponentGone();
 		return;
 	}

@@ -7,6 +7,7 @@
 // the next node. T6_TASK_PROFILE=1: time per step function / first word of the node in re-simulated frames (and the
 // same for live frames), logged every 100 re-simulated frames -> which tasks a re-simulated frame pays for.
 extern "C" void __imp__sub_822188C8(PPCContext& ctx, uint8_t* base);
+std::map<uint32_t, int> g_crowd_pages, g_other_pages;  // (research, T6_CROWD_PAGES)
 namespace t6np {
 struct TaskCost { double ms = 0; uint64_t n = 0; };
 std::map<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>, TaskCost> g_task_cost[2];  // [resim]: (step fn, *(node), *(node-84), *(node-88))
@@ -84,6 +85,34 @@ extern "C" void sub_822188C8(PPCContext& ctx, uint8_t* base) {
         }
         return;
       }
+    }
+  }
+  // T6_CROWD_PAGES=<step> (research): from that pad step on, for 3 steps, the pages each crowd task step writes (the
+  // dirty map cleared around the step, then put back) -> "T6 crowd pages" in the log
+  if (static const uint32_t at = T6EnvU32("T6_CROWD_PAGES", 0, 0); at && t6_thread_bit == 0 && state().step >= at && state().step < at + 3) {
+    static const std::vector<uint32_t> mob(std::begin(kT6CrowdVt), std::end(kT6CrowdVt));
+    const uint32_t vt = T6Rd32(ctx.r3.u32);
+    if (std::find(mob.begin(), mob.end(), vt) != mob.end()) {
+      static std::vector<unsigned char> keep(sizeof(t6_dirty));
+      auto& pages = g_crowd_pages;
+      static uint32_t steps = 0;
+      std::memcpy(keep.data(), t6_dirty, sizeof(t6_dirty));
+      std::memset(t6_dirty, 0, sizeof(t6_dirty));
+      __imp__sub_822188C8(ctx, base);
+      for (uint32_t q = 0; q < sizeof(t6_dirty); q++) {
+        if (t6_dirty[q]) pages[q] = 1;
+        t6_dirty[q] = keep[q];  // (only what the rest of the frame wrote stays: T6CrowdPagesFrame)
+      }
+      if (++steps % 211 == 0 || steps < 3) {
+        std::string runs;
+        for (auto it = pages.begin(); it != pages.end();) {
+          uint32_t a0 = it->first, e = a0 + 1;
+          for (++it; it != pages.end() && it->first == e; ++it) e++;
+          runs += fmt::format(" {:08X}-{:08X}", a0 << 12, e << 12);
+        }
+        REXLOG_INFO("T6 crowd pages after {} steps: {} pages:{}", steps, pages.size(), runs);
+      }
+      return;
     }
   }
   static const bool prof = T6Env("T6_TASK_PROFILE") != nullptr || T6Env("T6_SPIKE_PROFILE") != nullptr;
@@ -173,13 +202,21 @@ T6_RESIM_WAIT(sub_824D37D0, 0x824D37D0u)
 T6_RESIM_WAIT(sub_824E0620, 0x824E0620u)
 // sub_824DA2E0 = a D3D resolve (surface -> texture, then a wait for the GPU fence), reached once per frame through
 // sub_8252FBF0 from the virtual sub_8253BDF8 (lr 0x8253BE34; the caller does not use the result). In a re-simulated
-// frame of the fight nothing of it is shown and the next live frame resolves again: not done there (rw1 2026-10-17:
-// 0.2-0.3 ms of the ~1.9 ms of a re-simulated frame, all of it the GPU wait). T6_RESIM_RESOLVE=1 = always done.
+// frame of the fight nothing of it is shown: skipped there since 2.2.4 (rw1 2026-10-17: 0.2-0.3 ms of the ~1.9 ms of
+// a re-simulated frame, all of it the GPU wait). But sub_8253BDF8 resolves one of two buffers (index this+20, 304 bytes
+// each), and with no resolve in the last re-simulated frame the first live frame showed an old picture (user
+// 2026-10-19: name plates and "VS BATTLE" twitch online "since the optimization"). 2.3.2 - 2.3.4 resolved only in the
+// last re-simulated frame of a rollback: still broken pictures with a render scale (hud3 2026-10-20, scale 3, LagMs
+// 120, frame captures: 3 whole frames of garbage + 15 name plate drop-outs in 70 s; none at all hud5: 36). Now every
+// re-simulated frame resolves again, as before 2.2.4 (hud4 / hud6 / hud7: 0 broken frames at scale 3 / 1 / 2;
+// re-simulated frame +0.16 ms at scale 1, +0.35 ms at scale 2).
+// T6_RESIM_RESOLVE=last = only the last re-simulated frame (2.3.2 - 2.3.4), =0 = in none (2.2.4 - 2.3.1).
 extern "C" void __imp__sub_824DA2E0(PPCContext& ctx, uint8_t* base);
 extern "C" void sub_824DA2E0(PPCContext& ctx, uint8_t* base) {
   const uint32_t lr = static_cast<uint32_t>(ctx.lr);
-  static const bool keep = T6Env("T6_RESIM_RESOLVE") != nullptr;
-  if (!keep && g_net_resim && t6_thread_bit == 0 && lr == 0x8253BE34u && T6GameMode() == 4) {
+  static const bool only_last = T6EnvIs("T6_RESIM_RESOLVE", 'l'), none = T6EnvIs("T6_RESIM_RESOLVE", '0');
+  const bool last = g_net_frame + 1 >= g_rb_end;
+  if ((none || (only_last && !last)) && g_net_resim && t6_thread_bit == 0 && lr == 0x8253BE34u && T6GameMode() == 4) {
     ctx.r3.u64 = 0;
     ResimWaitNote(0x824DA2E0u, 0xFFFFFFFFu, 0);  // (counted as skipped)
     return;
@@ -202,7 +239,9 @@ extern "C" void sub_8221CA68(PPCContext& ctx, uint8_t* base) {
     T6AudioKick(g_net_frame + 1);
   }
   if (full || !(g_net_resim || g_net_skip_draw) || t6_thread_bit != 0 || T6GameMode() != 4) {
+    T6PoseDiagDraw(true);
     __imp__sub_8221CA68(ctx, base);
+    T6PoseDiagDraw(false);
     return;
   }
   const uint32_t self = ctx.r3.u32;
@@ -214,4 +253,149 @@ extern "C" void sub_8221CA68(PPCContext& ctx, uint8_t* base) {
   ctx.r3.u64 = obj;
   __imp__sub_8221B7C0(ctx, base);
   ctx.r3.u64 = 0;
+}
+
+// (research, T6_CROWD_PAGES) at every frame boundary of its window: the pages the rest of the frame wrote; at the end
+// the crowd's pages nobody else wrote
+void T6CrowdPagesFrame() {
+  static const uint32_t at = T6EnvU32("T6_CROWD_PAGES", 0, 0);
+  if (!at || state().step < at || state().step > at + 3) return;
+  if (state().step > at)
+    for (uint32_t q = 0; q < sizeof(t6_dirty); q++)
+      if (t6_dirty[q]) g_other_pages[q] = 1;
+  std::memset(t6_dirty, 0, sizeof(t6_dirty));
+  if (state().step != at + 3) return;
+  std::string runs;
+  uint32_t n = 0;
+  for (auto it = g_crowd_pages.begin(); it != g_crowd_pages.end();) {
+    if (g_other_pages.count(it->first)) { ++it; continue; }
+    uint32_t a0 = it->first, e = a0 + 1;
+    for (++it; it != g_crowd_pages.end() && it->first == e && !g_other_pages.count(e); ++it) e++;
+    runs += fmt::format(" {:08X}-{:08X}", a0 << 12, e << 12);
+    n += e - a0;
+  }
+  std::string shared;
+  for (const auto& [q, v] : g_crowd_pages)
+    if (g_other_pages.count(q)) shared += fmt::format(" {:08X}", q << 12);
+  REXLOG_INFO("T6 crowd pages: {} written only by the crowd:{}", n, runs);
+  REXLOG_INFO("T6 crowd pages: written by the crowd and others:{}", shared);
+}
+
+// The stage crowd's task objects (tcb_kkMob*, vtable at the node) in the task tree (root *(0x82828C60), links +16..+40)
+std::vector<uint32_t> T6CrowdNodes() {
+  const auto& kMob = kT6CrowdVt;
+  std::vector<uint32_t> out, todo{T6Rd32(0x82828C60u)};
+  std::unordered_set<uint32_t> seen;
+  while (!todo.empty() && seen.size() < 20000) {
+    const uint32_t n = todo.back();
+    todo.pop_back();
+    if (!T6HeapPtr(n) || !seen.insert(n).second) continue;
+    const uint32_t v = T6Rd32(n);
+    for (const uint32_t m : kMob)
+      if (v == m) out.push_back(n);
+    for (uint32_t o = 16; o <= 40; o += 4) todo.push_back(T6Rd32(n + o));
+  }
+  std::sort(out.begin(), out.end());
+  return out;
+}
+
+// The stage crowd stays live through a load (user 2026-10-19, "B"; PS3 RB_RESIM_SKIP + crowd out of the snapshot): its
+// tasks are not stepped in re-simulated frames, so a load that put their objects back made the whole crowd jump back
+// by the rollback's frames at every rollback ("the crowd bugging out" on a stream, ~100 ms ping; cl0: the animation
+// clock +0x8C went back in 12 % of the live frames). What stays live: the words of the crowd objects (0x2000 apart,
+// cr1: 211 on Fiesta del Tomate) that change from frame to frame and never hold an address - the animation clock and
+// the bone matrices. Learnt per crowd type (vtable) by comparing all objects 30 frames apart. Everything else is
+// loaded as before: the task header (vtable, tree links, step, flags), and the addresses in the bodies (each 0xA0 bone
+// block links into other structures - keeping the whole body live broke the task walk at the next frame, cl1).
+// OFF by default since 2.3.3 (T6_CROWD_LIVE=1 = on): the fixed 0x2000 window reaches past small crowd objects into
+// other tasks of the same heap - their counts / timers stayed live while their pointers were loaded: 2.3.2 crash in a
+// match (user, stage 17, read of guest 0x298 in sub_8225A780 = ZSGEfctParticleBTcb, particle count != 0 with a null
+// list - volum-fa). Needs the real object size before it can come back.
+namespace {
+bool CrowdAddress(uint32_t v) { return (v >= 0x82000000u && v < 0x82DB0000u) || (v >= 0xA7290000u && v < 0xABC00000u); }
+}  // namespace
+const std::vector<Range>& t6np::T6CrowdKeep() {
+  static std::vector<Range> keep;
+  static std::vector<uint32_t> nodes;
+  static std::vector<std::vector<uint32_t>> first;  // the bodies at the start of the learning
+  static uint32_t learn_at = 0, checked_at = 0;
+  static bool learning = false;
+  static const bool on = T6EnvIs("T6_CROWD_LIVE", '1');
+  if (!on || g_net_resim) return keep;
+  const uint32_t now = T6NetRunning() ? g_net_frame : state().step;
+  constexpr uint32_t kWords = 0x2000 / 4;
+  // the crowd of this stage: looked at again every 300 frames (a new stage in a rematch)
+  if (!learning && (checked_at == 0 || now < checked_at || now - checked_at >= 300)) {
+    checked_at = now;
+    auto cur = T6CrowdNodes();
+    cur.erase(std::remove_if(cur.begin(), cur.end(), [](uint32_t n) { return !T6InGameRange(n, 0x2000); }), cur.end());
+    if (cur != nodes) {
+      nodes = std::move(cur);
+      keep.clear();
+      first.assign(nodes.size(), std::vector<uint32_t>(kWords));
+      for (size_t k = 0; k < nodes.size(); k++)
+        for (uint32_t w = 0; w < kWords; w++) first[k][w] = T6Rd32(nodes[k] + 4 * w);
+      learning = !nodes.empty();
+      learn_at = now;
+    }
+  }
+  if (learning && now != learn_at && now - learn_at >= 30) {
+    learning = false;
+    // per crowd type: changed in some object of the type, an address in none (neither then nor now)
+    std::map<uint32_t, std::vector<uint8_t>> changed, address;  // vtable -> per word
+    for (size_t k = 0; k < nodes.size(); k++) {
+      const uint32_t vt = T6Rd32(nodes[k]);
+      auto& c = changed[vt];
+      auto& a = address[vt];
+      c.resize(kWords);
+      a.resize(kWords);
+      for (uint32_t w = 0x80 / 4; w < kWords; w++) {
+        const uint32_t v = T6Rd32(nodes[k] + 4 * w);
+        if (v != first[k][w]) c[w] = 1;
+        if (CrowdAddress(v) || CrowdAddress(first[k][w])) a[w] = 1;
+      }
+    }
+    for (const uint32_t n : nodes) {
+      const auto& c = changed[T6Rd32(n)];
+      const auto& a = address[T6Rd32(n)];
+      for (uint32_t w = 0x80 / 4; w < kWords;) {
+        if (!c[w] || a[w]) { w++; continue; }
+        uint32_t e = w + 1;
+        while (e < kWords && c[e] && !a[e]) e++;
+        keep.push_back({n + 4 * w, n + 4 * e});
+        w = e;
+      }
+    }
+    first.clear();
+    REXLOG_INFO("T6 crowd: {} crowd objects, {} live ranges ({} KB) through loads", nodes.size(), keep.size(),
+                [&] { uint64_t b = 0; for (const auto& r : keep) b += r.hi - r.lo; return b >> 10; }());
+  }
+  return keep;
+}
+
+// T6_CROWD_CLOCK=1 (test of the crowd fix): every live frame, the animation clock (+0x8C) of a crowd object in view;
+// a clock that went back since the last live frame = the crowd jumped back. "T6 crowd clock" every 600 frames.
+void T6CrowdClockTick() {
+  static const bool on = T6Env("T6_CROWD_CLOCK") != nullptr;
+  if (!on || !T6NetRunning() || T6GameMode() != 4) return;
+  static uint32_t node = 0, frames = 0, back = 0, still = 0, checked = 0;
+  static float last = 0;
+  if (!node || frames % 600 == 0) {
+    const auto nodes = T6CrowdNodes();
+    node = nodes.empty() ? 0 : nodes[nodes.size() / 2];
+    last = 0;
+  }
+  frames++;
+  if (!node) return;
+  const uint32_t u = T6Rd32(node + 0x8C);
+  float c;
+  std::memcpy(&c, &u, 4);
+  if (last != 0) {
+    checked++;
+    if (c < last) back++;
+    else if (c == last) still++;
+  }
+  last = c;
+  if (frames % 600 == 0)
+    REXLOG_INFO("T6 crowd clock: {} live frames checked, {} back, {} standing still (rollback loads {})", checked, back, still, g_net_loads);
 }

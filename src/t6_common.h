@@ -29,6 +29,18 @@ extern uint32_t (*g_t6_sys_alloc)(uint32_t size, uint32_t align);  // t6_netplay
 extern void (*g_t6_sys_free)(uint32_t addr);
 extern "C" constinit thread_local unsigned char t6_thread_bit;  // t6_netplay.cpp: 0 on the main (game) thread, 32 elsewhere
 
+// Practice input display (t6_practice.cpp writes, the overlay in t6_practice_hud.cpp reads): one row per change of the
+// player's input - dirs 1 up, 2 down, 4 back, 8 forward (the player's own facing), buttons 1 / 2 / 4 / 8 = 1 / 2 / 3 / 4
+struct T6InputRow {
+  uint8_t dirs = 0, buttons = 0;
+  uint16_t frames = 1;
+};
+constexpr size_t kInputRows = 18;  // (down to the bottom of the screen: the frame data boxes are beside it)
+extern std::mutex g_t6_in_mutex;
+extern std::deque<T6InputRow> g_t6_in_rows;  // newest first (under g_t6_in_mutex)
+extern std::atomic<bool> g_t6_in_display;
+extern std::atomic<bool> g_t6_fa_display[2];  // the menu's "Frame data you / opponent" rows (measured with T6_FRAME_DATA)
+
 // big endian guest word / half word at a guest address
 inline uint32_t T6Rd32(uint32_t a) { return _byteswap_ulong(*reinterpret_cast<const uint32_t*>(g_t6_membase + a)); }
 inline uint16_t T6Rd16(uint32_t a) { return _byteswap_ushort(*reinterpret_cast<const uint16_t*>(g_t6_membase + a)); }

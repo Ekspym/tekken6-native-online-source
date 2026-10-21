@@ -150,7 +150,10 @@ extern "C" uint64_t t6_timebase() {
     }
   }
   if (!on || t6_thread_bit != 0) {
-    if (T6NetRunning() && T6Env("T6_RAND_LOG")) {  // diagnostics: who else reads the time base in a session
+    // (read once, like the switches above: the GPU vblank thread reads the time base at every vblank, and the parameter
+    // lookup there crashed 5 games in a match - honk, lax, lmsSOL, Yuii 2026-10-18..20, host addr 0x88 in T6Env's map find)
+    static const bool rand_log = T6Env("T6_RAND_LOG") != nullptr;
+    if (rand_log && T6NetRunning()) {  // diagnostics: who else reads the time base in a session
       std::lock_guard lock(g_tb_mutex);
       auto& n = g_tb_reads[GetCurrentThreadId()];
       if (n++ == 0) {

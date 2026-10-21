@@ -3,41 +3,56 @@
 #include "generated/default/tekken6_init.h"
 #include "tekken6_app.h"
 
-void T6FrameDataDialog::OnDraw(ImGuiIO& io) {
-  const uint32_t now = GetTickCount();
-  const uint32_t at = g_t6_fa_tick.load(), sat = g_t6_fa_startup_tick.load();
-  const uint32_t hit_age = at ? now - at : 0xFFFFFFFFu, start_age = sat ? now - sat : 0xFFFFFFFFu;
-  const uint32_t age = hit_age < start_age ? hit_age : start_age;
-  if (age > 4000) return;  // gone 4 s after the last attack
-  // the advantage belongs to the attack whose startup shows: an attack that started after the last hit missed
-  const bool has_hit = hit_age <= 4000 && hit_age <= start_age + 1000;
-  const int v = g_t6_fa_value.load();
-  const float scale = io.DisplaySize.y / 720.0f * 3.0f;
-  const float alpha = age > 3000 ? 1.0f - (age - 3000) / 1000.0f : 1.0f;
-  ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.23f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-  ImGui::SetNextWindowBgAlpha(0.55f * alpha);
-  if (ImGui::Begin("##t6framedata", nullptr,
-                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
-                       ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings)) {
-    const ImVec4 grey(0.8f, 0.8f, 0.85f, alpha);
-    if (has_hit) {
-      ImGui::SetWindowFontScale(scale);
-      const ImVec4 color = v > 0 ? ImVec4(0.35f, 0.95f, 0.45f, alpha) : v < 0 ? ImVec4(1.0f, 0.4f, 0.35f, alpha) : ImVec4(0.9f, 0.9f, 0.9f, alpha);
-      const uint32_t flag = g_t6_fa_flag.load();
-      // (0xFFFFFFFE = knockdown / launch on hit: no number; 0xFFFFFFFF = the attack whiffed: v is minus its recovery)
-      if (flag == 0xFFFFFFFEu)
-        ImGui::TextColored(ImVec4(0.35f, 0.95f, 0.45f, alpha), "KD");
-      else
-        ImGui::TextColored(color, "%+d", v);
-      ImGui::SetWindowFontScale(scale * 0.4f);
-      ImGui::TextColored(grey, flag == 0xFFFFFFFEu ? "knockdown on hit" : flag == 0xFFFFFFFFu ? "recovery on whiff" : (flag & 1u) ? "on block" : "on hit");
+// the practice tools (user 2026-10-20: "napoveda ... ani tam nemusi byt ... otevrene menu ma byt dokonce vetsi ...
+// jediny kdy se ma male menu objevit je pokud nekdo udela quick action a to zase kde to bylo puvodne"): the open menu
+// big in the middle of the screen with the selected row marked; closed, nothing - only a quick action's message (2 s)
+// top left, with a running recording / playback / block after hit
+static void DrawPracticeStatus(ImGuiIO& io, uint32_t now) {
+  const uint32_t flags = g_t6_pr_flags.load(), mt = g_t6_pr_msg_tick.load();
+  const bool msg = mt && now - mt < 2000;
+  const int cursor = g_t6_pr_cursor.load();
+  const ImGuiWindowFlags wf = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                              ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings;
+  const ImVec4 grey(0.82f, 0.82f, 0.86f, 0.9f), white(1.0f, 1.0f, 1.0f, 1.0f), gold(1.0f, 0.85f, 0.3f, 1.0f);
+  const float scale = io.DisplaySize.y / 720.0f;
+  if (cursor >= 0) {
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowBgAlpha(0.85f);
+    if (ImGui::Begin("##t6practicemenu", nullptr, wf)) {
+      ImGui::SetWindowFontScale(scale * 1.9f);
+      ImGui::TextColored(gold, "PRACTICE MENU");
+      ImGui::Spacing();
+      std::lock_guard lock(g_t6_pr_msg_mutex);
+      for (size_t k = 0; k < g_t6_pr_lines.size(); k++) {
+        if (static_cast<int>(k) == cursor) ImGui::TextColored(gold, "> %s", g_t6_pr_lines[k].c_str());
+        else ImGui::TextColored(grey, "  %s", g_t6_pr_lines[k].c_str());
+      }
+      if (msg) ImGui::TextColored(white, "%s", g_t6_pr_msg.c_str());
     }
-    if (start_age <= 4000) {
-      ImGui::SetWindowFontScale(scale * 0.55f);
-      ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, alpha), "startup %d", g_t6_fa_startup.load());
+    ImGui::End();
+    return;
+  }
+  if (!msg && !(flags & 1u)) return;  // (a recording keeps its REC line: the 30 s run out, START stops it)
+  ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.02f, io.DisplaySize.y * 0.17f), ImGuiCond_Always);
+  ImGui::SetNextWindowBgAlpha(0.45f);
+  if (ImGui::Begin("##t6practice", nullptr, wf)) {
+    ImGui::SetWindowFontScale(scale * 1.3f);
+    if (flags & 1u) ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "REC  %.1f / 30 s  (START: stop)", g_t6_pr_frames.load() / 60.0f);
+    if (flags & 2u) ImGui::TextColored(ImVec4(0.35f, 0.95f, 0.45f, 1.0f), "PLAYBACK  %.1f s", g_t6_pr_frames.load() / 60.0f);
+    if (flags & 4u) ImGui::TextColored(ImVec4(0.45f, 0.78f, 1.0f, 1.0f), "BLOCK AFTER FIRST HIT");
+    if (msg) {
+      std::lock_guard lock(g_t6_pr_msg_mutex);
+      ImGui::TextColored(white, "%s", g_t6_pr_msg.c_str());
     }
   }
   ImGui::End();
+}
+
+void T6FrameDataDialog::OnDraw(ImGuiIO& io) {
+  const uint32_t now = GetTickCount();
+  DrawPracticeStatus(io, now);
+  if (T6Env("T6_PRACTICE")) T6DrawInputDisplay(io);
+  if (T6Env("T6_FRAME_DATA")) T6DrawFrameData(io, now);
 }
 
 Tekken6App::~Tekken6App() {
@@ -63,7 +78,7 @@ bool Tekken6App::StorageBootstrap() {
 }
 
 void Tekken6App::OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) {
-  if (!T6Env("T6_FRAME_DATA") || !drawer) return;
+  if ((!T6Env("T6_FRAME_DATA") && !T6Env("T6_PRACTICE")) || !drawer) return;  // (the practice tools' status too)
   // (input latency, 2026-10-17: a dialog of the app's ImGui drawer is a UI drawer - the presenter then paints from the
   // UI thread at its vblank tick, ~1 frame later. Own drawer without input, drawn by the guest output thread's
   // present as the presenter's guest output overlay - set in OnPostLaunchModule: the runtime and its presenter do
@@ -659,8 +674,24 @@ void Tekken6App::OnPostLoadXexImage() {
   }
 }
 
+// No mouse cursor over the game (user 2026-10-19: "lidem zustava mys nad hrou" - the SDK keeps it visible). The game
+// has no use for it: hidden while it is over the game's window (elsewhere it shows as usual). T6_SHOW_CURSOR=1 = the
+// SDK's.
+static bool T6HideCursor() {
+  static const bool hide = !T6Env("T6_SHOW_CURSOR");
+  return hide;
+}
+
+// (the launcher shows the window and brings it to the front at the loading: a cursor standing still over it got no
+// WM_SETCURSOR, so it stayed until the first mouse move - hidden at once here)
+void Tekken6App::OnWindowFocusChanged(bool focused) {
+  rex::ReXApp::OnWindowFocusChanged(focused);
+  if (focused && T6HideCursor()) SetCursor(nullptr);
+}
+
 void Tekken6App::OnPostLaunchModule(rex::system::XThread* thread) {
   rex::ReXApp::OnPostLaunchModule(thread);
+  if (T6HideCursor() && window()) window()->SetCursorVisibility(rex::ui::Window::CursorVisibility::kHidden);
   if (frame_data_drawer_) {  // (OnCreateDialogs: the frame data on top of the guest output, painted by its thread)
     auto* graphics = runtime() ? runtime()->graphics_system() : nullptr;
     auto* presenter = graphics ? graphics->presenter() : nullptr;

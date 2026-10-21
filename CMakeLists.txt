@@ -64,6 +64,9 @@ add_executable(tekken6 src/main.cpp src/tekken6_app.cpp
     src/t6_hang_watch.cpp
     src/t6_dumps.cpp
     src/t6_frame_data.cpp
+    src/t6_practice.cpp
+    src/t6_practice_hud.cpp
+    src/t6_pose_diag.cpp
     src/t6_hooks.cpp
     src/t6_session.cpp
     src/t6_pads.cpp

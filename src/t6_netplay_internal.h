@@ -70,6 +70,23 @@ void T6VoiceStatsLog(uint32_t frame);  // t6_voices.cpp
 void AudioStep(uint64_t f, bool in_session);  // t6_audio_step.cpp
 void FightPlayerDump();  // t6_dumps.cpp
 void FrameAdvantageTick();  // t6_frame_data.cpp
+void PracticeTick();  // t6_practice.cpp
+// tcb_kkMob* = the stage crowd (vtables from the RTTI)
+inline constexpr uint32_t kT6CrowdVt[] = {0x82003408u, 0x82003494u, 0x8200353Cu, 0x8200366Cu, 0x820036ECu, 0x8200378Cu, 0x820037ECu,
+                                          0x8200386Cu, 0x82003918u, 0x82003984u, 0x82003A5Cu, 0x82003ADCu, 0x82003B7Cu, 0x82003C10u};
+std::vector<uint32_t> T6CrowdNodes();  // t6_resim.cpp
+void T6CrowdPagesFrame();  // t6_resim.cpp
+void T6CrowdClockTick();  // t6_resim.cpp
+void T6PoseDiagDraw(bool begin);  // t6_pose_diag.cpp
+void T6PoseDiagFrame();  // t6_pose_diag.cpp
+void T6PoseDiagSave(uint32_t frame);  // t6_pose_diag.cpp
+void PracticePadUser0(uint8_t* gamepad, bool connected);  // t6_practice.cpp
+void PracticeEntries(uint8_t* p1, uint8_t* p2);  // t6_practice.cpp
+bool PracticeDummyStart();  // t6_practice.cpp: pad 2 presses START (the CONTROLLER prompt)
+bool PracticeDummyPad();  // t6_practice.cpp: the dummy's pad is connected (recording / playback)
+bool PracticeTakeRebattle();  // t6_practice.cpp: the practice menu asked for a new battle (once)
+void PracticeNewBattle();  // t6_practice.cpp: a (new) practice battle exists
+void PracticeRawPad(uint16_t buttons);  // t6_practice.cpp: user 0's buttons before the button layout, + the keyboard
 void ParkSession(uint32_t wait_steps);  // t6_audio_step.cpp
 void PracticePace();
 void StanceAudit();  // t6_frame_data.cpp
@@ -144,6 +161,7 @@ extern "C" void __imp__sub_82525280(PPCContext& ctx, uint8_t* base);
 extern "C" void __imp__sub_826B58E8(PPCContext& ctx, uint8_t* base);
 
 namespace t6np {
+void T6PlaybackDiag(const char* where);  // t6_session.cpp: Noh Theater crash (input playback globals)
 
 constexpr uint32_t kEntrySize = 0x4C;
 constexpr uint32_t kP1Offset = 80;
@@ -182,6 +200,7 @@ constexpr uint32_t kParkHold = 260;
 struct Range {
   uint32_t lo, hi;
 };
+const std::vector<Range>& T6CrowdKeep();  // t6_resim.cpp: the crowd objects' bytes that stay live through a load
 
 // A saved range: its bytes are at buf[off, off + size) of the snapshot (one buffer per snapshot, reused: hundreds of
 // small vectors reallocated every frame made a 36 MB save take ~120 ms, v2-v5)
@@ -361,6 +380,7 @@ extern bool g_moku_match;  // t6_session.cpp
 extern int g_net_depth;  // t6_session.cpp
 extern std::atomic<bool> g_net_fast_over;  // t6_net_state.cpp
 extern uint32_t g_net_frame;  // t6_session.cpp
+extern uint32_t g_rb_end;  // t6_session.cpp
 extern uint64_t g_net_frames;  // t6_session.cpp
 extern uint64_t g_net_loads;  // t6_session.cpp
 extern GGPOPlayerHandle g_net_local;  // t6_session.cpp

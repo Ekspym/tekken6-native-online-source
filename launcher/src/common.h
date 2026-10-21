@@ -20,7 +20,7 @@
 #include <mutex>
 #include <thread>
 
-inline const char* const kVersion = "2.3.0";  // v2.0.1: start-of-match save stall, rematch card + same stage, loser's random stage (ranked), blur / vibration options
+inline const char* const kVersion = "2.3.5";  // v2.0.1: start-of-match save stall, rematch card + same stage, loser's random stage (ranked), blur / vibration options
 // The lobby server and the release repository of the official build (CMake T6_SERVER / T6_RELEASE_API, set by the
 // untracked launcher/official.cmake); T6_LOBBY_SERVER / T6_UPDATE_API override them for local tests
 #ifndef T6_SERVER

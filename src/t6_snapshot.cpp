@@ -634,6 +634,10 @@ bool SnapTest::Load(uint32_t frame) const {
     keep.insert(keep.end(), g_cal_exclude.begin(), g_cal_exclude.end());
     keep.insert(keep.end(), g_excl_extra.begin(), g_excl_extra.end());
   }
+  {
+    const auto& crowd = T6CrowdKeep();
+    keep.insert(keep.end(), crowd.begin(), crowd.end());
+  }
   // (the incremental load only touches pages in scope: the library heap blocks are in the system heap, outside of it,
   // so copying them out and back - megabytes per load - is only needed for the full restore)
   if (!(quiet && IncEnabled())) {
@@ -643,6 +647,10 @@ bool SnapTest::Load(uint32_t frame) const {
   std::vector<uint8_t> excl_bytes;
   for (const auto& r : keep) excl_bytes.insert(excl_bytes.end(), g_t6_membase + r.lo, g_t6_membase + r.hi);
   bool loaded = true;
+  // (full restore: the pages stay writable until the kept bytes below are back too, then each run of pages gets its own
+  // protection back - VirtualProtect's "old" is the first page's only: a region starting in read-only XEX data made
+  // the whole .data read-only, the game's next store crashed; practice position load, all1 / all2 2026-10-19)
+  std::vector<std::pair<uint32_t, std::pair<uint32_t, DWORD>>> reprotect;  // address, (size, protection)
   if (quiet && IncEnabled()) {
     loaded = IncLoad(frame);
   } else {
@@ -657,22 +665,45 @@ bool SnapTest::Load(uint32_t frame) const {
   }
   if (from_shadow && !quiet) REXLOG_INFO("T6 snaptest: {} pages first written after the save restored from the shadow", from_shadow);
   for (const auto& reg : snap) {
+    for (uint32_t a = reg.addr; a < reg.addr + reg.size;) {
+      MEMORY_BASIC_INFORMATION mbi{};
+      if (!VirtualQuery(g_t6_membase + a, &mbi, sizeof(mbi))) break;
+      const uint64_t end = reinterpret_cast<uint64_t>(mbi.BaseAddress) + mbi.RegionSize - reinterpret_cast<uint64_t>(g_t6_membase);
+      const uint32_t n = static_cast<uint32_t>(std::min<uint64_t>(end, reg.addr + reg.size) - a);
+      if (n == 0) break;
+      if (mbi.State == MEM_COMMIT) reprotect.push_back({a, {n, mbi.Protect}});
+      a += n;
+    }
     DWORD old = 0;
     if (VirtualProtect(g_t6_membase + reg.addr, reg.size, PAGE_READWRITE, &old)) {
       std::memcpy(g_t6_membase + reg.addr, Data(reg), reg.size);
-      VirtualProtect(g_t6_membase + reg.addr, reg.size, old, &old);
+    } else {
+      REXLOG_ERROR("T6 snaptest: region {:08X}+{:X} could not be made writable ({}): not restored", reg.addr, reg.size, GetLastError());
+      loaded = false;  // (a partial restore is no restore - review)
     }
   }
   }
   size_t eoff = 0;
   for (const auto& r : keep) {
-    std::memcpy(g_t6_membase + r.lo, excl_bytes.data() + eoff, r.hi - r.lo);
+    // (unchanged bytes are not written: a kept range outside the restored regions may sit in a read-only page)
+    if (std::memcmp(g_t6_membase + r.lo, excl_bytes.data() + eoff, r.hi - r.lo) != 0) {
+      // (a changed kept range outside the restored regions may still sit in a read-only page - review)
+      DWORD old = 0;
+      const bool unlocked = VirtualProtect(g_t6_membase + r.lo, r.hi - r.lo, PAGE_READWRITE, &old) != 0;
+      std::memcpy(g_t6_membase + r.lo, excl_bytes.data() + eoff, r.hi - r.lo);
+      if (unlocked && old != PAGE_READWRITE) VirtualProtect(g_t6_membase + r.lo, r.hi - r.lo, old, &old);
+    }
     eoff += r.hi - r.lo;
   }
   size_t off = 0;
   for (size_t k = 0; k + 1 < live.size(); k += 2) {
-    std::memcpy(g_t6_membase + live[k], live_bytes.data() + off, live[k + 1]);
+    if (std::memcmp(g_t6_membase + live[k], live_bytes.data() + off, live[k + 1]) != 0)
+      std::memcpy(g_t6_membase + live[k], live_bytes.data() + off, live[k + 1]);
     off += live[k + 1];
+  }
+  for (const auto& [a, run] : reprotect) {
+    DWORD was = 0;
+    if (run.second != PAGE_READWRITE) VirtualProtect(g_t6_membase + a, run.first, run.second, &was);
   }
   static bool logged = false;
   if (!logged) {

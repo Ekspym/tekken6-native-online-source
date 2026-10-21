@@ -4,7 +4,7 @@
 # the main thread (PS3 rb_state: "foreign" pages). Run after codegen; undo with `git checkout generated`
 # is not possible (generated/ is ignored) -> re-run codegen (delete generated/default/codegen.build.stamp).
 #   python -I tools/pagemap_patch.py generated/default
-import glob, re, sys
+import glob, pathlib, re, sys
 
 KINDS = [  # (lo, hi, kind)
     (0x82338000, 0x82358000, 2),  # MMC sound system (MMC_* classes, tcb_device_sound_t)
@@ -109,19 +109,19 @@ extern "C" uint64_t t6_timebase();
 
 d = sys.argv[1]
 pch = d + '/tekken6_pch.h'
-s = open(pch, encoding='utf-8').read()
+s = pathlib.Path(pch).read_text(encoding='utf-8')
 if 'T6 pagemap diagnostic' not in s:
     s += PCH_BLOCK
 if 'T6 virtual timebase' not in s:
     s += TB_BLOCK
-open(pch, 'w', encoding='utf-8').write(s)
+pathlib.Path(pch).write_text(s, encoding='utf-8')
 n = 0
 pat = re.compile(r'(DEFINE_REX_FUNC\(sub_([0-9A-F]{8})\) \{\n\tREX_FUNC_PROLOGUE\(\);)')
 for p in sorted(glob.glob(d + '/tekken6_recomp.*.cpp')):
-    s = open(p, encoding='utf-8').read()
+    s = pathlib.Path(p).read_text(encoding='utf-8')
     if 'T6_KIND(' in s:
         continue
     s, c = pat.subn(lambda m: m.group(1) + '\n\tT6_KIND(%d);' % kind(int(m.group(2), 16)), s)
     n += c
-    open(p, 'w', encoding='utf-8').write(s)
+    pathlib.Path(p).write_text(s, encoding='utf-8')
 print(f'{d}: kind set in {n} functions')

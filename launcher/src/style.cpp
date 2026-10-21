@@ -25,6 +25,7 @@ QLabel#ddLabel { color: #ACACAC; font-size: 13px; font-weight: 700; letter-spaci
 QLabel#muted { color: #ACACAC; font-size: 15px; }
 QLabel#small { color: #7A7A80; font-size: 12px; }
 QLabel#err { color: #FF5A47; font-size: 15px; font-weight: 600; }
+QLabel#peerWarn { color: #FF3B2F; font-size: 30px; font-weight: 800; letter-spacing: 1px; padding: 6px 0; }
 QLabel#h1 { font-size: 26px; font-weight: 700; }
 QLabel#h3 { font-size: 19px; font-weight: 700; }
 QLabel#gold { color: #EFBC23; font-weight: 600; }

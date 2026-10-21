@@ -85,6 +85,11 @@ private:
 	void setSide(int side);
 	void setRegion(const QString& reg);
 	void setMaxPing(int ms);
+	void matchFound();
+	// matchmaking found a pair whose ping is still being measured: to the player it is still the search
+	// a queue pair before its accept question: from the server's 'lobby' (m_hideOpp) through the punch and the ping - the
+	// search page stays (user 2026-10-20: the VS page with two empty cards opened for every candidate it then dropped)
+	bool searchCandidate() const { return m_inLobby && m_lobby["queue"].toBool() && (m_punching || m_hideOpp) && !m_confirming && !m_inMatch; }
 
 	QPushButton* refreshButton(const std::function<void()>& fn);
 	QWidget* buildBoard();
@@ -288,6 +293,8 @@ private:
 	QLabel* m_costumeNote = nullptr;
 	int costume(int index) const;
 	void refreshCostume();
+	void fillLookBox(QComboBox* box) const;  // the Look choice of the Ranked / Casual pages
+	void pickLook(int look);
 
 	// ================= custom look (the game's Customize menu)
 	QJsonObject m_customs;  // "<kChars index>_<costume>" -> the 80-byte record as 160 hex digits
@@ -322,6 +329,7 @@ private:
 	int m_profileTab = 0;     // open tab of the profile page
 	QString m_region;         // EU / USA / SA / ME / SEA / ASIA / OCE / AF
 	bool m_regionLock = false; // matchmaking never outside the region
+	bool m_noWifi = false;     // "Super secret option for stable connection": no matchmaking pair with a Wi-Fi player
 	bool m_strict = false;     // Strict matchmaking: no ranked opponent more than 150 MMR apart (server STRICT_RANGE)
 	bool m_pingReported = false, m_setRunning = false;
 	QElapsedTimer m_pingClock;
@@ -346,6 +354,7 @@ private:
 	QLabel *m_loginWait = nullptr, *m_loginWaitSub = nullptr;
 	QElapsedTimer m_autoLeave;    // a decided set / an opponent who left: until the launcher leaves the lobby by itself
 	QElapsedTimer m_searchAgain;  // back on the mode's page after a match: the controller may press Search
+	bool m_searchAfterPark = false;  // "Back to ranked" pressed: the ranked search starts once the game is parked
 	int m_padTarget = 0;          // what the controller's confirm button presses now (padPoll)
 	bool m_oppLeft = false;       // the opponent of the match on the result page left the lobby
 	QElapsedTimer m_prepSince;  // since when the game is starting (shown in the buttons)
@@ -420,6 +429,8 @@ private:
 	static QString renderTargetArg();
 
 	static bool onWifi(const QHostAddress& to);
+	static bool localIsWifi(const QHostAddress& local);
+	bool serverOnWifi() const;  // this launcher's connection to the server leaves over Wi-Fi
 	int m_resScale = 1;  // draw resolution: 1 = 1280x720, 2 = 2560x1440, 3 = 3840x2160
 	int m_render3d = 0;  // the game's own 3D picture: 0 = 1024 x 576, 1 = 768 x 432, 2 = 640 x 360 (t6_resolution.cpp)
 	bool m_smallShadows = false;  // offscreen target 512 x 512 instead of 1024 x 1024
@@ -529,7 +540,7 @@ private:
 	QVBoxLayout* m_blockedBox = nullptr;  // Profile -> BLOCKED
 	QJsonArray m_blocks;  // the server's 'blocks' list: {id, name, time}
 	QLabel *m_status = nullptr, *m_matchInfo = nullptr, *m_matchSub = nullptr, *m_vsCode = nullptr, *m_vsCodeLabel = nullptr,
-	       *m_vsInfo = nullptr, *m_chipChar = nullptr, *m_chipDelay = nullptr;
+	       *m_vsInfo = nullptr, *m_vsPeerWarn = nullptr, *m_chipChar = nullptr, *m_chipDelay = nullptr;
 	QCheckBox* m_private = nullptr;
 	QLineEdit* m_codeEdit = nullptr;
 	QVBoxLayout* m_listBox = nullptr;
