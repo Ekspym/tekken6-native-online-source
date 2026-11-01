@@ -1,3 +1,4 @@
+#include "t6_advanced_practice.h"
 // Tekken 6 netplay - controllers: session inputs for XInputGetState, host pad calls (split out of t6_netplay.cpp, see the overview there)
 
 #include "t6_netplay_internal.h"
@@ -154,172 +155,30 @@ extern "C" void sub_826B58E8(PPCContext& ctx, uint8_t* base) {
     }
     return;
   }
-  // T6_PRACTICE=1 (launcher's PRACTICE button, a second instance next to the parked online game): the menu path of
-  // tools/menu_vs.bin up to the Offline menu (T6_PLAY_UNTIL), then user 0 goes down to PRACTICE (7th item: Arcade, Ghost,
-  // Versus, Team, Time Attack, Survival, Practice) and confirms every 40 steps (characters from T6_CHAR_P1 / P2 in the
-  // player setup hook, stage) until the battle exists. In the practice the pad is the player's controller + keyboard
-  // with START / BACK (practice menu); leaving the practice through it closes the window.
-  // Fast start like the online game's boot (the practice window is hidden until the battle loads): no sound pacing and
-  // no vsync from boot up to the battle, then real time (user: the practice took ~55 s to show up)
-  if (static const bool practice_fast = T6Env("T6_PRACTICE") != nullptr && !T6Env("T6_PRACTICE_SLOW");  // (tests: no fast start)
-      practice_fast && ctx.r3.u32 == 0) {
-    const auto fast = T6Rex().audio_fast;
-    static int fast_now = -1;
-    const int want = g_practice_battle ? 0 : 1;
-    if (fast && want != fast_now) {
-      fast_now = want;
-      fast(want);
-      rex::cvar::SetFlagByName("vsync", want ? "false" : "true");
-      REXLOG_INFO("T6 practice: fast start {} at step {}", want ? "on" : "off", state().step);
-    }
-  }
-  if (static const bool practice = T6Env("T6_PRACTICE") != nullptr; practice && state().play_done && ctx.r3.u32 < 2) {
-    static uint32_t stop = 0;
-    static bool in_battle = false;
-    if (!stop) stop = state().step;
-    // a new battle asked by the practice menu (another opponent): the game's CHARACTER SELECT was chosen; from here on
-    // the confirms below run again (without the menu downs) until the battle exists, the window stays open
-    static bool old_battle = false;  // (the old battle's task is still there: the new one is not the old one - opp4)
-    if (PracticeTakeRebattle()) {
-      in_battle = false;
-      g_practice_battle = false;
-      old_battle = true;
-      stop = state().step - 130;
-      REXLOG_INFO("T6 practice: new battle asked at step {}", state().step);
-    }
-    const uint32_t d = state().step - stop;
-    if (old_battle && d % 10 == 0 && !TaskTreeHas(0x8200C5E8u, 0x8200C5E8u)) {
-      old_battle = false;
-      REXLOG_INFO("T6 practice: the old battle is gone at step {}", state().step);
-    }
-    if (!in_battle && !old_battle && d > 160 && d % 10 == 0 && TaskTreeHas(0x8200C5E8u, 0x8200C5E8u)) {
-      in_battle = true;
-      g_practice_battle = true;
-      PracticeNewBattle();
-      REXLOG_INFO("T6 practice: battle at step {} (+{})", state().step, d);
-    }
-
-    // Leaving the practice through its menu (character select, main menu): the battle is gone -> the practice window
-    // closes (the launcher notices the end of the process); the player never sees the game's menus
-    // T6_ARCADE_CHALLENGE=1 (tests, finding the "new challenger" sound with T6_SND_LOG): the menu walk takes ARCADE
-    // (no downs) and in the fight user 1 presses START every 120 steps from 300 steps on (a challenger joins)
-    static const bool challenge = T6Env("T6_ARCADE_CHALLENGE") != nullptr;
-    if (challenge && in_battle && ctx.r3.u32 == 1) {
-      uint8_t* s1 = base + ctx.r4.u32;
-      PadReset(s1);
-      static uint32_t at = 0;
-      if (!at) at = state().step;
-      const uint32_t e = state().step - at;
-      if (e >= 300 && (e - 300) % 120 < 3) {
-        s1[5] = 0x10;  // START
-        REXLOG_INFO("T6 arcade challenge: user 1 START at step {}", state().step);
-      }
-      if (e >= 300 && (e - 300) % 40 >= 20 && (e - 300) % 40 < 23) s1[4] = 0x10;  // and A (character select of the challenger)
-      ctx.r3.u64 = 0;
-      return;
-    }
-    if (!challenge && in_battle && ctx.r3.u32 == 0 && d % 10 == 0 && !TaskTreeHas(0x8200C5E8u, 0x8200C5E8u)) {
-      REXLOG_INFO("T6 practice: left the practice at step {}, closing", state().step);
-      ExitProcess(0);
-    }
-    uint8_t* st = base + ctx.r4.u32;
-    if (!in_battle && d < 3000) {
+  if (T6AdvancedGuestAvailable() && T6Env("T6_PRACTICE") && state().play_done && ctx.r3.u32 < 2) {
+    const uint32_t user=ctx.r3.u32;
+    uint8_t* st=base+ctx.r4.u32;
+    if (!T6AdvancedManualSelection() && !g_practice_battle) {
+      static const uint32_t began=state().step;
+      const uint32_t d=state().step-began;
       PadReset(st);
-      if (ctx.r3.u32 == 0) {
-        for (uint32_t k = 0; k < (challenge ? 0u : 6u); k++)
-          if (d >= 20 + 14 * k && d < 23 + 14 * k) st[5] = 0x02;  // DPAD_DOWN
-        if (d >= 130 && (d - 130) % 40 < 3) st[4] = 0x10;         // A
-      }
-      ctx.r3.u64 = 0;
+      if (user==0 && d<130) {
+        for (uint32_t k=0;k<6;k++) if (d>=10+k*15 && d<13+k*15) st[5]=0x02;
+      } else if (user==0 && d<600 && d%40<3) st[4]=0x10;
+      ctx.r3.u64=user ? 1167 : 0;
       return;
     }
-    if (ctx.r3.u32 == 1) {
-      // recording / playback: the dummy is on CONTROLLER, whose pad must be connected - a disconnected opponent's pad
-      // hands the dummy to the game's AI (ai1 2026-10-19: no input for 15 s and it dashed and attacked by itself; user:
-      // "zapne se nejakej NPC"). Neutral here; its inputs are written into its entry at the input hook.
-      if (PracticeDummyPad()) {
-        PadReset(st);
-        if (PracticeDummyStart()) st[5] = 0x10;  // START (low byte of wButtons): the "controller in use" prompt
-        ctx.r3.u64 = 0;
-        return;
-      }
-      // T6_PRACTICE_HOLD2=<hex wButtons> (tests): a second pad holding that, e.g. 0008 = back for the dummy (guard) -
-      // only does something when the game lets pad 2 move the dummy
-      if (static const char* hold2 = T6Env("T6_PRACTICE_HOLD2"); hold2 && *hold2 && g_practice_battle) {
-        const uint16_t b = static_cast<uint16_t>(std::strtoul(hold2, nullptr, 16));
-        PadReset(st);
-        st[4] = static_cast<uint8_t>(b >> 8);
-        st[5] = static_cast<uint8_t>(b);
-        ctx.r3.u64 = 0;
-        return;
-      }
-      ctx.r3.u64 = 1167;  // the dummy: no pad
-      return;
-    }
-    __imp__sub_826B58E8(ctx, base);
-    const uint16_t raw = ctx.r3.u32 == 0 ? static_cast<uint16_t>(st[4] << 8 | st[5]) : 0;  // (before the player's layout)
-    if (ctx.r3.u32 == 0) RemapPad(st + 4);
-    const uint16_t kb = KeyboardButtons();
-    PracticeRawPad(static_cast<uint16_t>(raw | kb));  // (the practice menu goes by the physical buttons + the keyboard)
-    if (ctx.r3.u32 != 0 && kb) {  // no controller: the keyboard alone
-      PadReset(st);
-      ctx.r3.u64 = 0;
-    }
-    if (ctx.r3.u32 == 0) {  // START / BACK open the practice menu (user 2026-10-12)
-      st[4] |= static_cast<uint8_t>(kb >> 8);
-      st[5] |= static_cast<uint8_t>(kb);
-    }
-    // T6_PRACTICE_HOLD=<hex wButtons> (tests): held from 300 steps after the battle exists (the player has control),
-    // with or without a controller, e.g. F000 = 1+2+3+4 (ki charge)
-    // T6_PRACTICE_SEQ=<hex wButtons>:<frames>,... (tests): that sequence of inputs, started every 150 steps from 300
-    // steps after the battle exists, e.g. 4000:2,0:2,8000:2 = 1, 2 (a string)
-    if (static const char* seq = T6Env("T6_PRACTICE_SEQ"); seq && *seq && g_practice_battle && ctx.r3.u32 != 1) {
-      // T6_PRACTICE_SEQ_ONCE=<same form>: played once before the repeating sequence (the practice menu: dummy to guard)
-      static std::vector<std::pair<uint16_t, uint32_t>> steps, once;
-      static uint32_t from = 0, total = 0, total_once = 0;
-      if (!from) {
-        from = state().step + 300;
-        steps = T6ParseSeq(seq, &total);
-        once = T6ParseSeq(T6Env("T6_PRACTICE_SEQ_ONCE"), &total_once);
-      }
-      if (state().step >= from) {
-        const uint32_t at = state().step - from;
-        uint16_t b = 0;
-        if (at < total_once)
-          b = T6SeqAt(once, at);
-        else if (at >= total_once + (total_once ? 60 : 0))
-          b = T6SeqAt(steps, (at - total_once - (total_once ? 60 : 0)) % 150);  // (0 past its end)
-        if (ctx.r3.u32 != 0) {
-          PadReset(st);
-          ctx.r3.u64 = 0;
-        }
-        st[4] = static_cast<uint8_t>(b >> 8);
-        st[5] = static_cast<uint8_t>(b);
-      }
-      PracticeRawPad(static_cast<uint16_t>(st[4] << 8 | st[5]));  // (the test inputs are the "physical" buttons too)
-      PracticePadUser0(st + 4, ctx.r3.u32 == 0);
-      return;
-    }
-    if (static const char* hold = T6Env("T6_PRACTICE_HOLD"); hold && *hold && g_practice_battle) {  // (user 1 returned above)
-      static uint32_t from = 0;
-      if (!from) from = state().step + 300;
-      if (state().step >= from && (state().step - from) % 120 < 40) {  // pressed 40 steps of every 120 (repeats)
-        if (ctx.r3.u32 != 0) {
-          PadReset(st);
-          ctx.r3.u64 = 0;
-        }
-        const uint16_t b = static_cast<uint16_t>(std::strtoul(hold, nullptr, 16));
-        st[4] |= static_cast<uint8_t>(b >> 8);
-        st[5] |= static_cast<uint8_t>(b);
-        static int logged = 0;
-        if (logged++ % 600 == 0)
-          REXLOG_INFO("T6 practice: hold {:04X} at step {}, pad {:02X}{:02X}", b, state().step, st[4], st[5]);
+    __imp__sub_826B58E8(ctx,base);
+    if (user==0) {
+      RemapPad(st+4);
+      if (const uint16_t kb=KeyboardButtons()) {
+        if (ctx.r3.u32) { PadReset(st); ctx.r3.u64=0; }
+        st[4]|=static_cast<uint8_t>(kb>>8); st[5]|=static_cast<uint8_t>(kb);
       }
     }
-    PracticePadUser0(st + 4, ctx.r3.u32 == 0);  // (BACK shortcuts, recording - after the test inputs above)
     return;
   }
-  if (g_park && ctx.r3.u32 < 2) {
+  if (!T6AdvancedGuestAvailable() && g_park && ctx.r3.u32 < 2) {
     // result menu: REMATCH / SAVE REPLAY DATA / CHARACTER SELECT / RETURN TO MAIN MENU -> down, down, A (user 0); then
     // both users confirm (A every 40 steps) until the next battle exists
     const uint32_t user = ctx.r3.u32;
@@ -371,10 +230,12 @@ extern "C" void sub_826B58E8(PPCContext& ctx, uint8_t* base) {
     ctx.r3.u64 = 1167;  // ERROR_DEVICE_NOT_CONNECTED
     return;
   }
+  const uint32_t physicalUser=ctx.r3.u32,physicalState=ctx.r4.u32;
   const double h0 = T6NowMs();
   __imp__sub_826B58E8(ctx, base);
   g_pad_host_ms += T6NowMs() - h0;
   g_pad_host_n++;
+  if(ctx.r3.u32==0)T6PositionSnapshotPad(physicalUser,base+physicalState);
 }
 
 // XInputGetCapabilities(user r3, flags r4, caps* r5) of the game (sub_826B58E0, overrides the weak symbol). The game

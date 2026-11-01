@@ -35,13 +35,6 @@ extern std::atomic<int> g_t6_fa_value[2];      // t6_frame_data.cpp, [side]: fra
 extern std::atomic<uint32_t> g_t6_fa_tick[2];  // GetTickCount of it, 0 = none yet
 extern std::atomic<int> g_t6_fa_startup[2];    // startup of player 1's last attack (frame it became active)
 extern std::atomic<uint32_t> g_t6_fa_startup_tick[2];
-extern std::atomic<uint32_t> g_t6_pr_flags;      // t6_practice.cpp: 1 recording, 2 playing, 4 block after hit
-extern std::atomic<uint32_t> g_t6_pr_frames;     // frames of the recording
-extern std::atomic<uint32_t> g_t6_pr_msg_tick;   // GetTickCount of the last practice message
-extern std::mutex g_t6_pr_msg_mutex;
-extern std::string g_t6_pr_msg;
-extern std::vector<std::string> g_t6_pr_lines;  // the practice menu's rows / the quick help (under g_t6_pr_msg_mutex)
-extern std::atomic<int> g_t6_pr_cursor;         // the menu's selected row, -1 = closed
 extern std::atomic<uint32_t> g_t6_fa_flag[2];  // player 2's reaction flag at the measurement (0x10000 = hit, all ones = whiff)
 extern std::atomic<uint32_t> g_t6_fa_level[2];   // attack level word of that attack (move struct +0x10)
 extern std::atomic<uint32_t> g_t6_fa_active[2];  // its active frames: first << 16 | last
@@ -72,6 +65,8 @@ class Tekken6App final : public rex::ReXApp {
 
   // (user 2026-10-13: not "tekken6 [rexglue-v0.10.0.0-dev.unknown-Release]")
   std::string OnWindowTitle() override { return "Tekken 6 Online"; }
+
+  void OnConfigureFonts(ImFontAtlas* atlas) override;
 
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override;
 

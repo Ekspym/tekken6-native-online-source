@@ -283,3 +283,279 @@ registers = ["r11", "r10"]
 address = 0x821AB410
 name = "ApplyTekkenOffscreenResolution"
 registers = ["r3", "r4", "r5"]
+
+# Offline practice: guarded native menu, recording and HUD hooks.
+[[midasm_hook]]
+address = 0x822680F0
+name = "Advanced_TraceTekkenButtons"
+registers = ["r12", "r3"]
+
+[[midasm_hook]]
+address = 0x82268118
+name = "Advanced_TraceTekkenButtons"
+registers = ["r12", "r3"]
+
+[[midasm_hook]]
+address = 0x82268168
+name = "Advanced_TraceTekkenButtons"
+registers = ["r12", "r3"]
+
+[[midasm_hook]]
+address = 0x82268190
+name = "Advanced_TraceTekkenButtons"
+registers = ["r12", "r3"]
+
+[[midasm_hook]]
+address = 0x824604B0
+name = "Advanced_CapturePracticeHeld"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x824604C8
+name = "Advanced_CapturePracticeResetPress"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x82464B30
+name = "Advanced_BeginPracticeSideReset"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x824617D0
+name = "Advanced_RememberPracticePlayerOne"
+registers = ["r29"]
+
+[[midasm_hook]]
+address = 0x82461800
+name = "Advanced_ApplyPracticeResetSide"
+registers = ["r29", "r27", "r4"]
+
+[[midasm_hook]]
+address = 0x82536150
+name = "Advanced_TraceTekkenButtons"
+registers = ["r31", "r11"]
+
+[[midasm_hook]]
+address = 0x8229989C
+name = "Advanced_TraceTekkenStateCommand"
+registers = ["r12", "r3"]
+
+[[midasm_hook]]
+address = 0x82461A44
+name = "Advanced_RedirectPracticeFirstPlacement"
+registers = ["r3", "r27", "r4"]
+
+[[midasm_hook]]
+address = 0x8242E2E8
+name = "Advanced_InstallPracticeRageMenu"
+registers = ["r9", "r8"]
+
+[[midasm_hook]]
+address = 0x82461A68
+name = "Advanced_RedirectPracticeSecondPlacement"
+registers = ["r3", "r29"]
+
+[[midasm_hook]]
+address = 0x8229A4D0
+name = "Advanced_BeginPracticeCameraReset"
+registers = ["r6"]
+
+[[midasm_hook]]
+address = 0x82314578
+name = "Advanced_SelectPracticeResetCamera"
+registers = ["r28", "r31"]
+
+[[midasm_hook]]
+address = 0x822FEF2C
+name = "Advanced_StylePracticeRageNormal"
+registers = ["r31", "r4"]
+
+[[midasm_hook]]
+address = 0x8229A4D4
+name = "Advanced_EndPracticeCameraReset"
+registers = ["r24"]
+
+[[midasm_hook]]
+address = 0x822ECC1C
+name = "Advanced_TraceTekkenRage"
+registers = ["r11", "r10"]
+
+[[midasm_hook]]
+address = 0x82392710
+name = "Advanced_BeginPracticeRage"
+registers = ["r3", "r4", "r5"]
+
+[[midasm_hook]]
+address = 0x82391AF8
+name = "Advanced_EndPracticeRage"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x8229474C
+name = "Advanced_ApplyPracticeRageMenuThreshold"
+registers = ["r28", "r29", "r31"]
+
+[[midasm_hook]]
+address = 0x82436938
+name = "Advanced_TracePracticeMenuValue"
+registers = ["r11", "r10"]
+
+[[midasm_hook]]
+address = 0x82436954
+name = "Advanced_TracePracticeMenuValue"
+registers = ["r11", "r10"]
+
+[[midasm_hook]]
+address = 0x82436970
+name = "Advanced_TracePracticeMenuValue"
+registers = ["r11", "r10"]
+
+[[midasm_hook]]
+address = 0x82436988
+name = "Advanced_TracePracticeMenuValue"
+registers = ["r11", "r20"]
+
+[[midasm_hook]]
+address = 0x8242E2F8
+name = "Advanced_TraceQuickSelectMenu"
+registers = ["r3", "r4", "r5", "r6"]
+
+[[midasm_hook]]
+address = 0x8239FA20
+name = "Advanced_TraceQuickSelectCharacterScreen"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x8238EDB0
+name = "Advanced_TraceQuickSelectMenuClose"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x82392714
+name = "Advanced_TraceQuickSelectPractice"
+registers = ["r3", "r4", "r5"]
+
+[[midasm_hook]]
+address = 0x822A24C8
+name = "Advanced_TraceQuickSelectFighterSetting"
+registers = ["r3", "r4", "r5"]
+
+[[midasm_hook]]
+address = 0x822A24D8
+name = "Advanced_TraceQuickSelectFighterId"
+registers = ["r3", "r4"]
+
+[[midasm_hook]]
+address = 0x823424A8
+name = "Advanced_TraceStageBankRequest"
+registers = ["r3", "r4"]
+
+[[midasm_hook]]
+address = 0x82342840
+name = "Advanced_TraceStageBankLoad"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x82431F20
+name = "Advanced_QuickSelectMenuOpening"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x82435DF0
+name = "Advanced_QuickSelectSyncMenu"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x8242BFD8
+name = "Advanced_QuickSelectApplyAction"
+registers = ["r3", "r4"]
+
+[[midasm_hook]]
+address = 0x82245018
+name = "Advanced_QuickSelectRedirectMode"
+registers = ["r3", "r4"]
+
+[[midasm_hook]]
+address = 0x822518D8
+name = "Advanced_QuickSelectBypassScreen"
+registers = ["r3", "r4"]
+
+[[midasm_hook]]
+address = 0x82245090
+name = "Advanced_QuickSelectLoadCharacter"
+registers = ["r3", "r4", "r5"]
+
+[[midasm_hook]]
+address = 0x82269868
+name = "Advanced_QuickSelectLoadStage"
+registers = ["r3", "r4"]
+
+[[midasm_hook]]
+address = 0x82392718
+name = "Advanced_QuickSelectObservePractice"
+registers = ["r3", "r4", "r5"]
+
+[[midasm_hook]]
+address = 0x822F0F88
+name = "Advanced_QuickSelectAutoConfirmCharacter"
+registers = ["r3", "r4", "r5", "r7"]
+
+[[midasm_hook]]
+address = 0x822F17CC
+name = "Advanced_QuickSelectAutoConfirmStage"
+registers = ["r29", "r27", "r31", "r28"]
+
+[[midasm_hook]]
+address = 0x82267F90
+name = "Advanced_TraceFighterInputLookup"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x822A45C4
+name = "Advanced_OpponentControlSelectInput"
+registers = ["r29", "r30"]
+
+[[midasm_hook]]
+address = 0x823928A8
+name = "Advanced_NativeDummyControlTest"
+registers = ["r4", "r30"]
+
+[[midasm_hook]]
+address = 0x8238DD70
+name = "Advanced_BeginRecordMenuCloseQuery"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x8238DDF0
+name = "Advanced_FinishRecordMenuCloseQuery"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x8238EFBC
+name = "Advanced_RecordFinishPauseInput"
+registers = ["r3", "r25", "r31"]
+
+[[midasm_hook]]
+address = 0x824631B8
+name = "Advanced_HideRecordControllerPrompt"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x82268108
+name = "Advanced_ObserveRecordingStartRelease"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x824365E0
+name = "Advanced_GuardRecordPlaybackRootBack"
+registers = ["r26", "r30"]
+
+[[midasm_hook]]
+address = 0x823612D4
+name = "Advanced_AdjustNativePracticeHud"
+registers = ["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r12"]
+
+[[midasm_hook]]
+address = 0x8236AAAC
+name = "Advanced_MoveNativePracticePromptFrame"
+registers = ["r31", "r22", "r23"]

@@ -110,11 +110,13 @@ extern "C" uint64_t t6_timebase();
 d = sys.argv[1]
 pch = d + '/tekken6_pch.h'
 s = pathlib.Path(pch).read_text(encoding='utf-8')
+original = s
 if 'T6 pagemap diagnostic' not in s:
     s += PCH_BLOCK
 if 'T6 virtual timebase' not in s:
     s += TB_BLOCK
-pathlib.Path(pch).write_text(s, encoding='utf-8')
+if s != original:
+    pathlib.Path(pch).write_text(s, encoding='utf-8')
 n = 0
 pat = re.compile(r'(DEFINE_REX_FUNC\(sub_([0-9A-F]{8})\) \{\n\tREX_FUNC_PROLOGUE\(\);)')
 for p in sorted(glob.glob(d + '/tekken6_recomp.*.cpp')):

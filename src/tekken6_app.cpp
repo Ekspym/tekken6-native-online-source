@@ -3,56 +3,13 @@
 #include "generated/default/tekken6_init.h"
 #include "tekken6_app.h"
 
-// the practice tools (user 2026-10-20: "napoveda ... ani tam nemusi byt ... otevrene menu ma byt dokonce vetsi ...
-// jediny kdy se ma male menu objevit je pokud nekdo udela quick action a to zase kde to bylo puvodne"): the open menu
-// big in the middle of the screen with the selected row marked; closed, nothing - only a quick action's message (2 s)
-// top left, with a running recording / playback / block after hit
-static void DrawPracticeStatus(ImGuiIO& io, uint32_t now) {
-  const uint32_t flags = g_t6_pr_flags.load(), mt = g_t6_pr_msg_tick.load();
-  const bool msg = mt && now - mt < 2000;
-  const int cursor = g_t6_pr_cursor.load();
-  const ImGuiWindowFlags wf = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
-                              ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings;
-  const ImVec4 grey(0.82f, 0.82f, 0.86f, 0.9f), white(1.0f, 1.0f, 1.0f, 1.0f), gold(1.0f, 0.85f, 0.3f, 1.0f);
-  const float scale = io.DisplaySize.y / 720.0f;
-  if (cursor >= 0) {
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowBgAlpha(0.85f);
-    if (ImGui::Begin("##t6practicemenu", nullptr, wf)) {
-      ImGui::SetWindowFontScale(scale * 1.9f);
-      ImGui::TextColored(gold, "PRACTICE MENU");
-      ImGui::Spacing();
-      std::lock_guard lock(g_t6_pr_msg_mutex);
-      for (size_t k = 0; k < g_t6_pr_lines.size(); k++) {
-        if (static_cast<int>(k) == cursor) ImGui::TextColored(gold, "> %s", g_t6_pr_lines[k].c_str());
-        else ImGui::TextColored(grey, "  %s", g_t6_pr_lines[k].c_str());
-      }
-      if (msg) ImGui::TextColored(white, "%s", g_t6_pr_msg.c_str());
-    }
-    ImGui::End();
-    return;
-  }
-  if (!msg && !(flags & 1u)) return;  // (a recording keeps its REC line: the 30 s run out, START stops it)
-  ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.02f, io.DisplaySize.y * 0.17f), ImGuiCond_Always);
-  ImGui::SetNextWindowBgAlpha(0.45f);
-  if (ImGui::Begin("##t6practice", nullptr, wf)) {
-    ImGui::SetWindowFontScale(scale * 1.3f);
-    if (flags & 1u) ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "REC  %.1f / 30 s  (START: stop)", g_t6_pr_frames.load() / 60.0f);
-    if (flags & 2u) ImGui::TextColored(ImVec4(0.35f, 0.95f, 0.45f, 1.0f), "PLAYBACK  %.1f s", g_t6_pr_frames.load() / 60.0f);
-    if (flags & 4u) ImGui::TextColored(ImVec4(0.45f, 0.78f, 1.0f, 1.0f), "BLOCK AFTER FIRST HIT");
-    if (msg) {
-      std::lock_guard lock(g_t6_pr_msg_mutex);
-      ImGui::TextColored(white, "%s", g_t6_pr_msg.c_str());
-    }
-  }
-  ImGui::End();
-}
+#include "t6_advanced_practice.h"
 
 void T6FrameDataDialog::OnDraw(ImGuiIO& io) {
   const uint32_t now = GetTickCount();
-  DrawPracticeStatus(io, now);
+  T6AdvancedDraw(io);
   if (T6Env("T6_PRACTICE")) T6DrawInputDisplay(io);
-  if (T6Env("T6_FRAME_DATA")) T6DrawFrameData(io, now);
+  if (!T6AdvancedAvailable() && T6Env("T6_FRAME_DATA")) T6DrawFrameData(io, now);
 }
 
 Tekken6App::~Tekken6App() {
@@ -77,8 +34,13 @@ bool Tekken6App::StorageBootstrap() {
   return v && *v == '1';
 }
 
+void Tekken6App::OnConfigureFonts(ImFontAtlas* atlas) {
+  rex::ReXApp::OnConfigureFonts(atlas);
+  T6AdvancedConfigureFonts(atlas);
+}
+
 void Tekken6App::OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) {
-  if ((!T6Env("T6_FRAME_DATA") && !T6Env("T6_PRACTICE")) || !drawer) return;  // (the practice tools' status too)
+  if ((!T6Env("T6_FRAME_DATA") && !T6Env("T6_PRACTICE") && !T6AdvancedRequested()) || !drawer) return;  // (the practice tools' status too)
   // (input latency, 2026-10-17: a dialog of the app's ImGui drawer is a UI drawer - the presenter then paints from the
   // UI thread at its vblank tick, ~1 frame later. Own drawer without input, drawn by the guest output thread's
   // present as the presenter's guest output overlay - set in OnPostLaunchModule: the runtime and its presenter do
@@ -87,7 +49,8 @@ void Tekken6App::OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) {
     frame_data_dialog_ = std::make_unique<T6FrameDataDialog>(drawer);
     return;
   }
-  frame_data_drawer_ = std::make_unique<rex::ui::ImGuiDrawer>(window(), 63);
+  frame_data_drawer_ = std::make_unique<rex::ui::ImGuiDrawer>(
+      window(), 63, [](ImFontAtlas* atlas) { T6AdvancedConfigureFonts(atlas); });
   frame_data_drawer_->SetNoInput(true);
   frame_data_drawer_->SetImmediateDrawer(immediate_drawer());
   frame_data_dialog_ = std::make_unique<T6FrameDataDialog>(frame_data_drawer_.get());

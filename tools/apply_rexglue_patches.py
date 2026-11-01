@@ -24,7 +24,7 @@ def apply(repo: Path, patch: Path, base: str) -> bool:
     if not patch.is_file():
         print(f"Missing project patch: {patch}", file=sys.stderr)
         return False
-    if git(repo, "apply", "--reverse", "--check", str(patch), check=False).returncode == 0:
+    if git(repo, "apply", "--ignore-space-change", "--reverse", "--check", str(patch), check=False).returncode == 0:
         print(f"{patch.name}: already applied")
         return True
     revision = git(repo, "rev-parse", "HEAD").stdout.strip()
@@ -34,8 +34,8 @@ def apply(repo: Path, patch: Path, base: str) -> bool:
     if git(repo, "status", "--porcelain", "--untracked-files=no").stdout.strip():
         print(f"{patch.name}: {repo} has local changes; refusing to overwrite them.", file=sys.stderr)
         return False
-    git(repo, "apply", "--check", str(patch))
-    git(repo, "apply", str(patch))
+    git(repo, "apply", "--ignore-space-change", "--check", str(patch))
+    git(repo, "apply", "--ignore-space-change", str(patch))
     print(f"{patch.name}: applied")
     return True
 
