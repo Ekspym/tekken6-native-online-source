@@ -1,6 +1,7 @@
 // Tekken 6 netplay - XAudio2 voices across rollbacks: stale voices, lifetimes, orphans (split out of t6_netplay.cpp, see the overview there)
 
 #include "t6_netplay_internal.h"
+#include "t6_advanced_practice.h"
 
 // ---- XAudio2 voice wrappers: guard against stale voices after a rollback (an earlier analysis) ----
 // The game objects that hold a voice pointer (MMC track +284 -> library object -> voice, CnuSound voice entries) are
@@ -15,7 +16,9 @@ namespace t6np {
 // the practice crashed in XAudio2 sub_824EED98 on a voice with the first word 0x3F800000 right after a slot load)
 bool VoiceGuardOn() {
   static const bool on = net_config().enabled || T6Env("T6_PRACTICE") != nullptr;
-  return on;
+  // Track voice lifetimes from startup for the migrated offline practice mode.
+  // A full load can restore a reference to a voice released since the save.
+  return on || T6AdvancedRequested();
 }
 uint64_t g_stale_voice_calls = 0;
 bool StaleVoice(PPCContext& ctx, uint8_t* base, uint32_t fn) {

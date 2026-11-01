@@ -1,3 +1,4 @@
+#include "t6_advanced_practice.h"
 // Tekken 6 game hooks - battle player setup, customization of a side, game info step (split out of t6_watch.cpp)
 
 #include "t6_watch_internal.h"
@@ -8,6 +9,7 @@
 extern "C" void __imp__sub_82245090(PPCContext& ctx, uint8_t* base);
 extern "C" void __imp__sub_8238E3B8(PPCContext& ctx, uint8_t* base);
 extern "C" void sub_82245090(PPCContext& ctx, uint8_t* base) {
+  if (T6AdvancedGuestAvailable()) { __imp__sub_82245090(ctx,base); return; }
   const uint32_t side = ctx.r4.u32, code = ctx.r5.u32;
   const char* env = side == 0 ? T6Env("T6_CHAR_P1") : side == 1 ? T6Env("T6_CHAR_P2") : nullptr;
   if (env && *env) ctx.r5.u64 = std::strtoul(env, nullptr, 0);
@@ -53,6 +55,7 @@ extern "C" void sub_82245090(PPCContext& ctx, uint8_t* base) {
 // are set as for "no profile" (0xFFFF, 0xFFFF, mirror 0: no costume flip). Every call is logged.
 extern "C" void __imp__sub_82244368(PPCContext& ctx, uint8_t* base);
 extern "C" void sub_82244368(PPCContext& ctx, uint8_t* base) {
+  if (T6AdvancedGuestAvailable()) { __imp__sub_82244368(ctx,base); return; }
   const uint32_t side = ctx.r4.u32, code = ctx.r5.u32, o1 = ctx.r6.u32, o2 = ctx.r7.u32, o3 = ctx.r8.u32;
   const char* env = side == 0 ? T6Env("T6_CUSTOM_P1") : side == 1 ? T6Env("T6_CUSTOM_P2") : nullptr;
   static uint32_t buf[2] = {};
@@ -90,6 +93,7 @@ uint32_t GameInfo(uint8_t* base) {
 }
 }  // namespace t6w
 extern "C" void t6_game_info_step(uint8_t* base, uint32_t step) {
+  if (T6AdvancedGuestAvailable()) return;
   const uint32_t g = GameInfo(base);
   if (!g) return;
   static uint32_t last1 = ~0u, last2 = ~0u;

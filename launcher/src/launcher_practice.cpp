@@ -179,6 +179,7 @@ void Launcher::startPractice()
 	env.insert("T6_PRACTICE", "1");
 	m_practiceStatus = QDir(runDir).filePath("status.txt");
 	QFile::remove(m_practiceStatus);
+	QFile::remove(m_practiceStatus + ".selection-ready");
 	env.insert("T6_NET_STATUS", QDir::toNativeSeparators(m_practiceStatus));
 	// the menu path of the online game up to the Offline menu; the game goes on to PRACTICE by itself
 	env.insert("T6_PLAY", QDir::toNativeSeparators(rootFile("tools/menu_vs.bin")));
@@ -187,6 +188,8 @@ void Launcher::startPractice()
 	env.insert("T6_VIRTUAL_TB", "1");
 	// position slots of the practice tools = the online game's snapshots: same sound separation and exclusions
 	env.insert("T6_SOUND_SEPARATE", "1");
+	// Run profiles are fresh each launch; practice choices belong to the installation.
+	env.insert("T6_PRACTICE_SETTINGS_FILE", QDir::toNativeSeparators(rootFile("practice-settings.ini")));
 	if (const QString excl = rootFile("tools/netplay_exclude.txt"); QFile::exists(excl))
 		env.insert("T6_SNAP_EXCLUDE_FILE", QDir::toNativeSeparators(excl));
 	{
@@ -253,7 +256,7 @@ void Launcher::pollPractice()
 				mode = line.mid(5).trimmed();
 		}
 	const bool battle = mode == "14" || (!state.isEmpty() && state != "loading" && state != "other" && state != "menu");
-	if (!battle)
+	if (!battle && !QFile::exists(m_practiceStatus + ".selection-ready"))
 	{
 		showWindowsOf(pid, false, m_fullscreen);
 		return;

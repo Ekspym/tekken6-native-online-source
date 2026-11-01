@@ -1,3 +1,4 @@
+#include "t6_advanced_practice.h"
 // Tekken 6 netplay - frame boundary and input hooks (split out of t6_netplay.cpp, see the overview there)
 
 #include "t6_netplay_internal.h"
@@ -18,10 +19,11 @@ void T6FrameHook(PPCRegister& r3) {
   }
   (void)r3;
   if (!g_t6_membase) return;
+  T6AdvancedTick();
   PracticePace();
   StanceAudit();
   FightPlayerDump();
-  FrameAdvantageTick();
+  if (!T6AdvancedAvailable()) FrameAdvantageTick();
   PracticeTick();
   if (!g_main_ctx) {
     const auto fn = T6Rex().current_guest_context;

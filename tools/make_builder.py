@@ -29,7 +29,7 @@ shutil.copy(DEV + '/builder/build_native.py', B)
 shutil.copy(DEV + '/builder/build.version', B)
 os.makedirs(B + '/project/tools', exist_ok=True)
 shutil.copy(DEV + '/tekken6_config.toml', B + '/project')
-for t in ('pagemap_patch', 'rawstore_patch', 'sndcall_patch', 'faststore_patch'):
+for t in ('pagemap_patch', 'rawstore_patch', 'sndcall_patch', 'faststore_patch', 'expand_menu_rows'):
     shutil.copy(DEV + f'/tools/{t}.py', B + '/project/tools')
 
 # 2. Python (embeddable, the PS3 package's) and the compiler (x86_64 only)
@@ -56,6 +56,7 @@ shutil.copy(BLD + '/tools/xdvdfs/xdvdfs_tool.exe', B + '/bin/xdvdfs.exe')
 
 # 4. runtime next to the game exe
 os.makedirs(B + '/runtime', exist_ok=True)
+shutil.copy(DEV + '/licenses/RacingSansOne-OFL.txt', B + '/runtime')
 for f in ('rexruntime.dll', 'rexgpu-xenos.dll'):
     shutil.copy(f'{BLD}/{f}', B + '/runtime')
 for f in ('libc++.dll', 'libunwind.dll'):
@@ -64,7 +65,7 @@ shutil.copy(DEV + '/build/mmjoystick.ini', B + '/runtime')
 
 # 5. compile flags of the generated code (compile_commands.json), include dirs copied into builder\sdk
 cc = json.loads(pathlib.Path(BLD + '/compile_commands.json').read_text())
-cmd = next(c['command'] for c in cc if c['file'].replace('\\', '/').endswith('generated/default/tekken6_recomp.0.cpp'))
+cmd = next(c['command'] for c in cc if c['file'].replace('\\', '/').endswith('tekken6_recomp.0.cpp'))
 args = shlex.split(cmd.replace('\\', '/'), posix=True)[1:]
 cxx, incs, skip = [], [], 0
 for i, a in enumerate(args):

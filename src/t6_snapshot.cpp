@@ -1,8 +1,20 @@
 // Tekken 6 netplay - save / load of the game state (SnapTest) and the save/restore test (split out of t6_netplay.cpp, see the overview there)
 
 #include "t6_netplay_internal.h"
+#include <memory>
+#include "practice/t6_game_checkpoint.h"
 
 namespace t6np {
+namespace {
+thread_local bool practice_complete=false;
+struct PracticeImageMode {
+  bool previous=practice_complete;
+  PracticeImageMode(){practice_complete=true;}
+  ~PracticeImageMode(){practice_complete=previous;}
+};
+}
+void SavePracticeImage(SnapTest& image){if(image.quiet)return;PracticeImageMode mode;image.Save();}
+bool LoadPracticeImage(const SnapTest& image){if(image.quiet)return false;PracticeImageMode mode;return image.Load();}
 
 // PS3 wait_for_draw_idle / RB_SNAP_SAVE_IDLE: the frame must be completely drawn, GPU included, before a save or a
 // load. A ring with read == write is not enough: the GPU can still owe a swap (scratch flag *(device[+10900] + 4) = 1,
@@ -82,12 +94,18 @@ void SnapTest::Save(uint32_t frame) {
   NetLockHold net(quiet);
   QueryPerformanceCounter(&q1);
   g_net_where = "save: job workers";
-  if (!WaitWorkersIdle(50)) REXLOG_WARN("T6 snaptest: job workers still busy at the save");
+  if (!WaitWorkersIdle(50)) {
+    REXLOG_WARN("T6 snaptest: job workers still busy at the save");
+    if(practice_complete)return;
+  }
   QueryPerformanceCounter(&q2);
   g_net_where = "save: copy";
   // The GPU only matters at a load (it reads memory the load rewrites); a save copies what the main thread and the
   // (idle) workers wrote. PS3: waiting for the draw thread before every save was the main cost (RB_SNAP_SAVE_IDLE).
-  if (!quiet) WaitDrawIdle(100, "save");
+  if (!quiet) {
+    const bool idle=WaitDrawIdle(100,"save");
+    if(practice_complete && !idle)return;
+  }
   if (quiet && IncEnabled()) {
     LARGE_INTEGER g0, g1;
     QueryPerformanceCounter(&g0);
@@ -106,7 +124,24 @@ void SnapTest::Save(uint32_t frame) {
     }
     return;
   }
-  if (quiet) {
+  std::unique_ptr<GlobalLockHold> practiceGlobal;
+  if(practice_complete)practiceGlobal=std::make_unique<GlobalLockHold>();
+  if (practice_complete) {
+    // Full practice image: retain calibrated control/allocator pages, and include
+    // all committed core game data/heaps so an in-progress action is complete.
+    CalibrateFromMap(SnapRanges(), g_cal_exclude);
+    g_cal_done = true;
+    auto& ranges = SnapRanges();
+    ranges.push_back({0x82726AC8u, 0x82DB0000u});
+    ranges.push_back({0xA7290000u, 0xABA90000u});
+    std::sort(ranges.begin(), ranges.end(), [](const Range& a,const Range& b){return a.lo<b.lo;});
+    std::vector<Range> merged;
+    for(const auto& r:ranges) {
+      if(!merged.empty() && r.lo<=merged.back().hi) merged.back().hi=std::max(merged.back().hi,r.hi);
+      else merged.push_back(r);
+    }
+    ranges.swap(merged);
+  } else if (quiet) {
     static uint32_t saves = 0;
     CalibrateFromMap(SnapRanges(), g_cal_exclude, saves++ % 30 == 0);
     g_cal_done = true;
@@ -580,7 +615,10 @@ bool SnapTest::Load(uint32_t frame) const {
   NetLockHold net;
   QueryPerformanceCounter(&l1);
   g_net_where = "load: job workers";
-  if (!WaitWorkersIdle(50)) REXLOG_WARN("T6 snaptest: job workers still busy at the load");
+  if (!WaitWorkersIdle(50)) {
+    REXLOG_WARN("T6 snaptest: job workers still busy at the load");
+    if(practice_complete)return false;
+  }
   QueryPerformanceCounter(&l2);
   g_net_where = "load: draw / GPU idle";
   // Restoring physical memory while the GPU still reads command buffers there broke the GPU ring
@@ -588,7 +626,10 @@ bool SnapTest::Load(uint32_t frame) const {
   // before an incremental load; the draw worker itself is idle (NetLockHold above). The GPU may still read vertex
   // data in the game heaps that the load rewrites (PS3: visual artifacts until the GPU-read pages were held back).
   static const bool no_gpu_wait = T6EnvIs("T6_LOAD_NO_GPU_WAIT", '1');
-  if (!((SnapNoPhys() || no_gpu_wait || LoadHoldGpu()) && quiet && IncEnabled())) WaitDrawIdle(100, "load");
+  if (!((SnapNoPhys() || no_gpu_wait || LoadHoldGpu()) && quiet && IncEnabled())) {
+    const bool idle=WaitDrawIdle(100,"load");
+    if(practice_complete && !idle)return false;
+  }
   QueryPerformanceCounter(&l3);
   g_net_where = "load: restore";
   GlobalLockHold global;  // from the copy of the kept bytes to their write-back
@@ -599,6 +640,29 @@ bool SnapTest::Load(uint32_t frame) const {
   (void)l4;
   // Live kernel objects (critical sections, dispatcher headers linked to host objects) keep their current bytes:
   // restoring an old owner / handle hangs the game (PS3 port: lwmutex). Registry in rexruntime.dll (xobject.cpp).
+  if(practice_complete) {
+    // Reject an expired image before writing anything if a required page was
+    // decommitted since the save. Do not turn that into a partial practice load.
+    for(const auto& reg:snap) {
+      const uint64_t limit=uint64_t(reg.addr)+reg.size;
+      for(uint64_t a=reg.addr;a<limit;) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if(!VirtualQuery(g_t6_membase+a,&mbi,sizeof(mbi)) || mbi.State!=MEM_COMMIT ||
+           (mbi.Protect&(PAGE_GUARD|PAGE_NOACCESS))) {
+          REXLOG_WARN("T6 practice: saved state page {:08X} is no longer committed",a);
+          return false;
+        }
+        const uint64_t end=reinterpret_cast<uint64_t>(mbi.BaseAddress)+mbi.RegionSize-
+                           reinterpret_cast<uint64_t>(g_t6_membase);
+        if(end<=a)return false;
+        a=std::min(limit,end);
+      }
+    }
+    // Library/device bytes can acquire new live state after this save.
+    std::vector<Range> unused;
+    CalibrateFromMap(unused,g_cal_exclude);
+    g_cal_done=true;
+  }
   const auto live_fn = T6Rex().live_guest_objects;
   std::vector<uint32_t> live;
   std::vector<uint8_t> live_bytes;
@@ -656,7 +720,7 @@ bool SnapTest::Load(uint32_t frame) const {
   } else {
   // Pages first written after the save: their content at the save was the shadow content
   uint32_t from_shadow = 0;
-  for (uint32_t i = 0; i < saved_pages.size(); i++) {
+  for (uint32_t i = 0; !practice_complete && i < saved_pages.size(); i++) {
     if (saved_pages[i] || !g_shadow_valid[i]) continue;
     const uint32_t a = ShadowPageAddr(i);
     if (!t6_pagemap[a >> 12]) continue;

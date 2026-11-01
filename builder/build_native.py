@@ -14,6 +14,7 @@ or precompiled header changed; a relink needs no compiler run at all.
 Output lines for the launcher:  STEP <n>/<N> <text>, PROGRESS <0-100>, DONE <exe>, ERROR <text>; exit 0 / 1.
 Supported: Tekken 6 (USA, Europe) Rev 1 - title 4E4D07FC, Default.xex SHA-256 below."""
 import concurrent.futures
+import pathlib
 import hashlib
 import json
 import os
@@ -231,6 +232,12 @@ def main():
         print(f'OK {info}' if what else f'ERROR {info}', flush=True)
         return 0 if what else 1
     relink = args == ['--relink']
+    if relink:
+        previous = pathlib.Path(OUT, 'build.version')
+        current = pathlib.Path(HERE, 'build.version').read_text().strip()
+        if not previous.exists() or previous.read_text().strip() != current:
+            relink = False  # new native hooks/row adapter require codegen, not only relinking
+            args = ['--update']
     if args == ['--update']:
         args = [GAME]  # the data the first build extracted; no ISO needed
     if relink:
@@ -242,8 +249,8 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     log_file = open(os.path.join(OUT, 'build.log'), 'w', encoding='utf-8')
     t0 = time.time()
-    say(f'version {open(os.path.join(HERE, "build.version")).read().strip()}, source {src}')
-    cfg = json.load(open(os.path.join(HERE, 'compile.json'), encoding='utf-8'))
+    say(f'version {pathlib.Path(HERE, "build.version").read_text().strip()}, source {src}')
+    cfg = json.loads(pathlib.Path(HERE, 'compile.json').read_text(encoding='utf-8'))
     if relink:
         objs = [l.strip().strip('"') for l in open(RSP)] if os.path.exists(RSP) else []
         objs = [o for o in objs if o]
@@ -289,6 +296,7 @@ def main():
     step(4, 'Applying the netplay patches')
     for t in PATCH_TOOLS:
         run([sys.executable, '-I', os.path.join(HERE, 'project', 'tools', t + '.py'), GEN], t)
+    run([sys.executable, '-I', os.path.join(HERE, 'project', 'tools', 'expand_menu_rows.py'), '--in-place-dir', GEN], 'practice rows')
     say('PROGRESS 20')
 
     step(5, 'Compiling (this takes a while)')

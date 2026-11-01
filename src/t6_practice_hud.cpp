@@ -128,14 +128,13 @@ static void DrawSide(ImGuiIO& io, int side) {
 // Each side its own box (user 2026-10-20: "kazdej vlastni box ... moje vlevo dole a jeho vpravo dole jako to dela
 // tekken 8"), each with its own menu row
 void T6DrawFrameData(ImGuiIO& io, uint32_t) {
-  if (g_t6_pr_cursor.load() >= 0) return;  // (not over our open menu)
   for (int side = 0; side < 2; side++)
     if (g_t6_fa_display[side].load()) DrawSide(io, side);
 }
 
 // The player's inputs (Tekken 8's input display): newest at the top, frames held, arrow, buttons 1 - 4
 void T6DrawInputDisplay(ImGuiIO& io) {
-  if (!g_t6_in_display.load() || g_t6_pr_cursor.load() >= 0) return;  // (not over our open menu)
+  if (!g_t6_in_display.load()) return;  // (not over our open menu)
   std::vector<T6InputRow> rows;
   {
     std::lock_guard lock(g_t6_in_mutex);
